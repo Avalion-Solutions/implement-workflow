@@ -1,8 +1,10 @@
+---
+
 # Build Delivery Report
 
 ## Executive Summary
 
-The run is not ready under the recorded gates.
+The original Build gate stopped correctly on a readonly Bash assignment. That precise case was repaired and independently accepted in the follow-up standalone repair described below.
 
 ## Run and Source
 
@@ -35,4 +37,17 @@ None.
 
 ## Readiness
 
-Not ready for merge approval
+## Follow-up resolution
+
+The standalone repair at `22e769c` fixes readonly Bash assignment handling; it was Judge-accepted, merged into this integration branch, and followed by full validation. The completed integration head is `fe353d0`.
+
+- Codex: `2.1.28+codex.20260911235200`
+- Claude: `2.1.19+claude.20260911235200`
+- 90 canonical Node regressions, 26 generated-package regressions, dashboard tests/build, Build lint, quick/strict skill checks, adapter drift checks, and `git diff --check` passed.
+- Fresh Bash and the systemd user manager resolve `BASICS_TEMP_ROOT=/temp`.
+
+The normal `basics@personal` reinstall remains pending publication because its configured Git marketplace still serves remote version `2.1.17`; the installer safely rejected that stale destination instead of materializing mismatched hooks.
+
+Ready for explicit merge approval
+
+---
