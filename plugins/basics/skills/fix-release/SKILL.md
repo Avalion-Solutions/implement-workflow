@@ -14,8 +14,8 @@ branch.
 Inspect repository instructions, release/version manifests, branch topology,
 worktrees, and status before changing Git state. Require clean `main` and
 `devel` worktrees, no existing release branch for the target version, and an
-explicit user request to perform the release. Never push, install, publish, or
-delete branches unless the user separately authorizes that action.
+explicit user request to perform the release. Never push, install, or publish
+unless the user separately authorizes that action.
 
 ## Patch-release flow
 
@@ -32,10 +32,9 @@ delete branches unless the user separately authorizes that action.
 5. Merge the release branch into `main` with an explicit merge commit. Verify
    the merged result before continuing.
 6. Merge the same release branch directly into `devel` with an explicit merge
-   commit. Verify branch topology and version manifests on both branches.
-7. Before deleting `release/<next-patch-version>`, request confirmation that
-   names that exact branch and states that deleting it removes the local branch
-   reference. Delete it only after both merge commits are verified.
+   commit. Verify branch topology and version manifests on both branches, then
+   delete `release/<next-patch-version>` locally. Its commits are recoverable
+   from both verified merge commits.
 
 Stop for merge conflicts, a dirty worktree, failed checks, a version mismatch,
 or any release action outside the approved scope. Preserve all evidence and
