@@ -246,6 +246,24 @@ test("Linux persistence preserves a nonblank Bash-only root before writing other
   }
 });
 
+test("Linux persistence preserves a readonly Bash-only root before writing other defaults", () => {
+  const { root } = fixture();
+  try {
+    const system = tempRootSystem({ root });
+    mkdirSync(system.home, { recursive: true });
+    writeFileSync(join(system.home, ".bashrc"), "readonly BASICS_TEMP_ROOT=/custom/bash-root\n");
+
+    const result = configureTempRoot({ system });
+
+    assert.equal(result.preserved, true);
+    assert.equal(result.value, "/custom/bash-root");
+    assert.equal(system.commands.length, 0);
+    assert.equal(existsSync(join(system.home, ".config", "environment.d", "50-basics-temp-root.conf")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("installer dry-run exposes the planned temporary-root persistence without installing", () => {
   const { root, source, destination } = fixture();
   try {
