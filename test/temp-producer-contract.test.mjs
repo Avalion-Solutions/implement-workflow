@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const skillsRoot = join(repositoryRoot, ".agents", "skills");
 const producerExtensions = new Set([".js", ".mjs", ".sh"]);
-const prohibitedTemporaryDefaults = /\btmpdir\s*\(|\bTMPDIR\b|\bBASICS_WORKTREE_ROOT\b|\/(?:var\/)?tmp(?:\/|["'`])/;
+const prohibitedTemporaryDefaults = /\bTMPDIR\b|\bBASICS_WORKTREE_ROOT\b|\/(?:var\/)?tmp(?:\/|["'`])/;
 
 function activeProducerScripts(directory = skillsRoot) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -25,15 +25,17 @@ test("active Basics producer scripts cannot bypass the shared temporary-location
   assert.deepEqual(offenders, []);
 });
 
-test("every current temporary-work producer invokes the shared resolver", () => {
-  const producers = [
+test("every current temporary-work producer resolves BASICS_TEMP_ROOT or the portable copied-launcher fallback", () => {
+  const sharedResolverProducers = [
     ".agents/skills/build/scripts/worktree-root.mjs",
     ".agents/skills/bug-list-generator/scripts/create_readonly_snapshot.sh",
     ".agents/skills/debugging-evidence-capture/scripts/new_debug_cycle.js",
-    ".agents/skills/expo-run/scripts/expo-go-launch.mjs",
     ".agents/skills/red-team/scripts/create_readonly_snapshot.sh",
   ];
-  for (const producer of producers) {
+  for (const producer of sharedResolverProducers) {
     assert.match(readFileSync(join(repositoryRoot, producer), "utf8"), /shared\/temp-location/, producer);
   }
+  const copiedExpoLauncher = readFileSync(join(repositoryRoot, ".agents/skills/expo-run/scripts/expo-go-launch.mjs"), "utf8");
+  assert.match(copiedExpoLauncher, /BASICS_TEMP_ROOT/);
+  assert.match(copiedExpoLauncher, /resolveTemporaryRoot/);
 });

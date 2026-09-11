@@ -5,16 +5,16 @@ description: Run a bounded-unattended feature workflow with one approval only fo
 
 # Build
 
-Deliver a reviewed integration branch while keeping planning, execution, and merge authority separate. Never merge to a protected user branch without explicit current approval.
+Deliver a reviewed branch; keep planning, execution, and merge authority separate. Never merge to a protected branch without explicit approval.
 
 Read [references/orchestration-contract.md](references/orchestration-contract.md) and [references/status-protocol.md](references/status-protocol.md). Use `scripts/build-handoff.mjs` for manifests, ledger, approvals, receipts, and reporting.
-Dashboard code and tests live in `assets/dashboard/`.
+Dashboard lives in `assets/dashboard/`.
 
 ## Source and run setup
 
 Use `model: "gpt-5.6-sol"` and `reasoning_effort: "xhigh"` when available. Inspect `AGENTS.md`, repository state, and validation commands. Require a clean source worktree.
 
-Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It resolves `BASICS_TEMP_ROOT`, then the deprecated Build-only `BASICS_WORKTREE_ROOT`, then the platform temporary directory, and preflights the selected root. `build-handoff.mjs init` records its absolute paths; every child lane inherits them.
+Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It resolves `BASICS_TEMP_ROOT`, then deprecated Build-only `BASICS_WORKTREE_ROOT`, then platform temp, and preflights the root. `build-handoff.mjs init` records absolute paths; every child lane inherits them.
 
 Create only after checking that the recorded path and branch do not exist:
 

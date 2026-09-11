@@ -47,8 +47,7 @@ function projectSlug(projectRoot) {
 
 function resolveTemporaryRoot(environment = process.env) {
   const configured = typeof environment.BASICS_TEMP_ROOT === "string" ? environment.BASICS_TEMP_ROOT.trim() : "";
-  const legacy = typeof environment.BASICS_WORKTREE_ROOT === "string" ? environment.BASICS_WORKTREE_ROOT.trim() : "";
-  const root = configured || legacy || tmpdir();
+  const root = configured || tmpdir();
   if (!isAbsolute(root)) throw new Error(`Temporary root must be absolute: ${root}`);
   return resolve(root);
 }
