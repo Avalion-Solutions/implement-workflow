@@ -96,16 +96,16 @@ function initialize(options) {
     base: required(options, "base"),
     branch: required(options, "branch"),
   };
-  const worktree = resolveBuildWorktree({ runId: required(options, "run"), environment: options.environment || process.env });
   if (existsSync(paths.ledger)) {
     const ledger = readLedger(paths.ledger);
     if (ledger.runId !== required(options, "run")) throw new Error(`Run ledger already belongs to ${ledger.runId}`);
     for (const field of ["repo", "base", "branch"]) {
       if (ledger.source[field] !== source[field]) throw new Error(`Run ledger ${field} does not match: ${ledger.source[field]}`);
     }
-    requireRecordedWorktree(ledger, worktree.root);
+    requireRecordedWorktree(ledger);
     return { ledger: paths.ledger, reused: true };
   }
+  const worktree = resolveBuildWorktree({ runId: required(options, "run"), environment: options.environment || process.env });
   const now = timestamp();
   writeAtomic(paths.ledger, {
     schemaVersion: 1,

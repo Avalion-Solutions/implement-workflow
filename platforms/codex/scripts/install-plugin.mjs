@@ -283,6 +283,11 @@ export function configureTempRoot({
   if (nonblank(configuredValue)) {
     return { value: configuredValue, preserved: true, configured: false, dryRun, actions };
   }
+  const bashContent = system.existsSync(bashrc) ? system.readFileSync(bashrc, "utf8") : "";
+  const bashValue = fileValue(bashContent);
+  if (!bashContent.includes(bashFallbackStart) && nonblank(bashValue)) {
+    return { value: bashValue, preserved: true, configured: false, dryRun, actions };
+  }
   recordPersistence(actions, "linux-environment.d", () => {
     if (!dryRun) {
       system.mkdirSync(dirname(environmentFile), { recursive: true });
@@ -291,11 +296,8 @@ export function configureTempRoot({
     return { status: "configured", path: environmentFile, content: `${tempRootName}=${value}\n` };
   }, dryRun);
 
-  const bashContent = system.existsSync(bashrc) ? system.readFileSync(bashrc, "utf8") : "";
   if (bashContent.includes(bashFallbackStart) && bashContent.includes(bashFallbackEnd)) {
     actions.push({ name: "linux-bash-fallback", status: "unchanged", path: bashrc, dryRun });
-  } else if (nonblank(fileValue(bashContent))) {
-    actions.push({ name: "linux-bash-fallback", status: "preserved", path: bashrc, dryRun });
   } else {
     const fallback = `${bashFallbackStart}\nif [ -z \"\${BASICS_TEMP_ROOT:-}\" ]; then\n  export ${tempRootName}=\"${value}\"\nfi\n${bashFallbackEnd}\n`;
     recordPersistence(actions, "linux-bash-fallback", () => {

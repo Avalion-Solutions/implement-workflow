@@ -2,9 +2,9 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveTempLocation, tempPath } from "../../../shared/temp-location.mjs";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const LOCAL_ENDPOINT = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s"'`<>]*)?/gi;
@@ -45,9 +45,17 @@ function projectSlug(projectRoot) {
   return slug || "expo-app";
 }
 
+function resolveTemporaryRoot(environment = process.env) {
+  const configured = typeof environment.BASICS_TEMP_ROOT === "string" ? environment.BASICS_TEMP_ROOT.trim() : "";
+  const legacy = typeof environment.BASICS_WORKTREE_ROOT === "string" ? environment.BASICS_WORKTREE_ROOT.trim() : "";
+  const root = configured || legacy || tmpdir();
+  if (!isAbsolute(root)) throw new Error(`Temporary root must be absolute: ${root}`);
+  return resolve(root);
+}
+
 export function qrArtifactPath({ projectRoot, temporaryRoot }) {
   if (temporaryRoot) return join(temporaryRoot, `${projectSlug(projectRoot)}-expo-go-qr.txt`);
-  return tempPath(resolveTempLocation(), { project: projectSlug(projectRoot), topic: "expo", name: "expo-go-qr.txt" });
+  return join(resolveTemporaryRoot(), projectSlug(projectRoot), "expo", "expo-go-qr.txt");
 }
 
 export async function writeQrArtifact({ projectRoot, temporaryRoot, url, render }) {
