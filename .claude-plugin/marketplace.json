@@ -9,7 +9,7 @@
       "name": "basics",
       "source": "./platforms/claude",
       "description": "Foundational coding-agent skills and workflow delivery for Claude Code.",
-      "version": "2.1.13+claude.20260911164717"
+      "version": "2.1.14+claude.20260911211616"
     }
   ]
 }
