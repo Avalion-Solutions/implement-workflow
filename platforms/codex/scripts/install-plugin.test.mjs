@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { inspectInstall, installPlugin, materializeHooks } from "./install-plugin.mjs";
+import { configureTempRoot, inspectInstall, installPlugin, materializeHooks } from "./install-plugin.mjs";
 
-const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../plugins/basics");
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "implement-plugin-install-"));
@@ -26,6 +26,7 @@ function installFrom(source, destination) {
       cpSync(source, destination, { recursive: true, force: true });
       return { status: 0 };
     },
+    configureRoot: () => ({ configured: true, actions: [] }),
   });
 }
 
@@ -172,10 +173,164 @@ test("installation materializes Codex's reported destination rather than a legac
         cpSync(source, destination, { recursive: true });
         return { status: 0, installedPath: destination };
       },
+      configureRoot: () => ({ configured: true, actions: [] }),
     });
     assert.equal(result.installedDestination, destination);
     assert.equal(result.materialized.destination, destination);
     assert.doesNotMatch(readFileSync(join(destination, "hooks", "hooks.json"), "utf8"), /\$PLUGIN_ROOT|%PLUGIN_ROOT%/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function tempRootSystem({ root, platform = "linux", environment = {}, systemctlStatus = 0, registryValue = null }) {
+  const commands = [];
+  return {
+    platform,
+    environment,
+    home: join(root, "home"),
+    existsSync,
+    readFileSync,
+    writeFileSync,
+    mkdirSync,
+    commands,
+    spawnSync(command, args) {
+      commands.push([command, ...args]);
+      if (command === "reg" && args[0] === "query" && registryValue !== null) {
+        return { status: 0, stdout: `BASICS_TEMP_ROOT    REG_SZ    ${registryValue}\n`, stderr: "" };
+      }
+      return systemctlStatus === 0
+        ? { status: 0, stdout: "", stderr: "" }
+        : { status: systemctlStatus, stdout: "", stderr: "user manager unavailable" };
+    },
+  };
+}
+
+test("Linux persistence writes environment.d and a conditional managed Bash fallback only when blank", () => {
+  const { root } = fixture();
+  try {
+    const system = tempRootSystem({ root });
+    const preview = configureTempRoot({ system, dryRun: true });
+    assert.equal(preview.configured, true);
+    assert.equal(existsSync(join(system.home, ".config", "environment.d", "50-basics-temp-root.conf")), false);
+    assert.deepEqual(preview.actions.map(action => action.name), ["linux-environment.d", "linux-bash-fallback", "linux-systemd-user-environment"]);
+
+    const result = configureTempRoot({ system });
+    assert.equal(result.configured, true);
+    assert.equal(readFileSync(join(system.home, ".config", "environment.d", "50-basics-temp-root.conf"), "utf8"), "BASICS_TEMP_ROOT=/temp\n");
+    assert.match(readFileSync(join(system.home, ".bashrc"), "utf8"), /if \[ -z "\$\{BASICS_TEMP_ROOT:-\}" \]; then/);
+    assert.deepEqual(system.commands.at(-1), ["systemctl", "--user", "set-environment", "BASICS_TEMP_ROOT=/temp"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Linux persistence preserves a nonblank Bash-only root before writing other defaults", () => {
+  const { root } = fixture();
+  try {
+    const system = tempRootSystem({ root });
+    mkdirSync(system.home, { recursive: true });
+    writeFileSync(
+      join(system.home, ".bashrc"),
+      'if [ -z "${BASICS_TEMP_ROOT:-}" ]; then\n  export BASICS_TEMP_ROOT="/custom/bash-root"\nfi\n',
+    );
+
+    const result = configureTempRoot({ system });
+
+    assert.equal(result.preserved, true);
+    assert.equal(result.value, "/custom/bash-root");
+    assert.equal(system.commands.length, 0);
+    assert.equal(existsSync(join(system.home, ".config", "environment.d", "50-basics-temp-root.conf")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Linux persistence preserves a readonly Bash-only root before writing other defaults", () => {
+  const { root } = fixture();
+  try {
+    const system = tempRootSystem({ root });
+    mkdirSync(system.home, { recursive: true });
+    writeFileSync(join(system.home, ".bashrc"), "readonly BASICS_TEMP_ROOT=/custom/bash-root\n");
+
+    const result = configureTempRoot({ system });
+
+    assert.equal(result.preserved, true);
+    assert.equal(result.value, "/custom/bash-root");
+    assert.equal(system.commands.length, 0);
+    assert.equal(existsSync(join(system.home, ".config", "environment.d", "50-basics-temp-root.conf")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("installer dry-run exposes the planned temporary-root persistence without installing", () => {
+  const { root, source, destination } = fixture();
+  try {
+    const system = tempRootSystem({ root });
+    const result = installPlugin({
+      sourceRoot: source,
+      destination,
+      dryRun: true,
+      configureRoot: options => configureTempRoot({ system, ...options }),
+    });
+    assert.equal(result.tempRoot.dryRun, true);
+    assert.equal(result.tempRoot.actions[0].name, "linux-environment.d");
+    assert.equal(existsSync(destination), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persistence preserves every nonblank existing root and reports host failures without rolling installation back", () => {
+  const { root, source, destination } = fixture();
+  try {
+    const system = tempRootSystem({ root, environment: { BASICS_TEMP_ROOT: "/custom/root" } });
+    const preserved = configureTempRoot({ system });
+    assert.equal(preserved.preserved, true);
+    assert.equal(system.commands.length, 0);
+
+    const configuredPath = join(root, "configured", "home", ".config", "environment.d");
+    mkdirSync(configuredPath, { recursive: true });
+    writeFileSync(join(configuredPath, "50-basics-temp-root.conf"), "BASICS_TEMP_ROOT=/already/chosen\n");
+    const configuredSystem = tempRootSystem({ root: join(root, "configured") });
+    assert.equal(configureTempRoot({ system: configuredSystem }).value, "/already/chosen");
+    assert.equal(configuredSystem.commands.length, 0);
+
+    const failingSystem = tempRootSystem({ root: join(root, "failure"), systemctlStatus: 1 });
+    const result = installPlugin({
+      sourceRoot: source,
+      destination,
+      executePluginAdd: () => {
+        cpSync(source, destination, { recursive: true });
+        return { status: 0, installedPath: destination };
+      },
+      configureRoot: () => configureTempRoot({ system: failingSystem }),
+    });
+    assert.equal(result.materialized.destination, destination);
+    assert.equal(result.tempRoot.configured, false);
+    assert.equal(result.tempRoot.actions.at(-1).status, "failed");
+    assert.doesNotMatch(readFileSync(join(destination, "hooks", "hooks.json"), "utf8"), /\$PLUGIN_ROOT|%PLUGIN_ROOT%/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Windows persistence writes the current user's registry only when its value is absent or blank", () => {
+  const { root } = fixture();
+  try {
+    const system = tempRootSystem({ root, platform: "win32" });
+    const result = configureTempRoot({ system });
+    assert.equal(result.configured, true);
+    assert.deepEqual(system.commands, [
+      ["reg", "query", "HKCU\\Environment", "/v", "BASICS_TEMP_ROOT"],
+      ["reg", "add", "HKCU\\Environment", "/v", "BASICS_TEMP_ROOT", "/t", "REG_SZ", "/d", "/temp", "/f"],
+    ]);
+    const custom = tempRootSystem({ root: join(root, "custom"), platform: "win32", registryValue: "D:\\agent-temp" });
+    const preserved = configureTempRoot({ system: custom });
+    assert.equal(preserved.value, "D:\\agent-temp");
+    assert.equal(preserved.preserved, true);
+    assert.equal(custom.commands.length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

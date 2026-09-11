@@ -2,8 +2,8 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -45,16 +45,25 @@ function projectSlug(projectRoot) {
   return slug || "expo-app";
 }
 
-export function qrArtifactPath({ projectRoot, temporaryRoot = tmpdir() }) {
-  return join(temporaryRoot, `${projectSlug(projectRoot)}-expo-go-qr.txt`);
+function resolveTemporaryRoot(environment = process.env) {
+  const configured = typeof environment.BASICS_TEMP_ROOT === "string" ? environment.BASICS_TEMP_ROOT.trim() : "";
+  const legacy = typeof environment.BASICS_WORKTREE_ROOT === "string" ? environment.BASICS_WORKTREE_ROOT.trim() : "";
+  const root = configured || legacy || tmpdir();
+  if (!isAbsolute(root)) throw new Error(`Temporary root must be absolute: ${root}`);
+  return resolve(root);
 }
 
-export async function writeQrArtifact({ projectRoot, temporaryRoot = tmpdir(), url, render }) {
+export function qrArtifactPath({ projectRoot, temporaryRoot }) {
+  if (temporaryRoot) return join(temporaryRoot, `${projectSlug(projectRoot)}-expo-go-qr.txt`);
+  return join(resolveTemporaryRoot(), projectSlug(projectRoot), "expo", "expo-go-qr.txt");
+}
+
+export async function writeQrArtifact({ projectRoot, temporaryRoot, url, render }) {
   if (!/^exp:\/\//i.test(url ?? "")) throw new Error("A published exp:// URL is required before creating a QR artifact.");
   const qr = await render(url);
   const artifact = qrArtifactPath({ projectRoot, temporaryRoot });
   const contents = `${qr.trimEnd()}\n\nExpo Go URL: ${url}\n`;
-  await mkdir(temporaryRoot, { recursive: true });
+  await mkdir(dirname(artifact), { recursive: true });
   await writeFile(artifact, contents, "utf8");
   return artifact;
 }
@@ -157,7 +166,7 @@ function streamChildOutput(child, onOutput, stdout, stderr) {
 export async function runExpo({
   mode,
   projectRoot = process.cwd(),
-  temporaryRoot = tmpdir(),
+  temporaryRoot,
   timeoutMs = timeoutFromEnvironment(process.env.EXPO_RUN_TIMEOUT_MS),
   spawnImpl = spawn,
   stdout = process.stdout,

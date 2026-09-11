@@ -73,7 +73,7 @@ start --go --tunnel --clear
 It waits until Expo actually prints both a public `https://...` browser URL and
 an `exp://...` Expo Go URL. Only then does it render a terminal QR for that
 exact Expo Go URL and save the same QR text and URL in a project-specific
-`.txt` file under the platform temporary directory. It reports an actionable
+`.txt` file under `BASICS_TEMP_ROOT/<project>/expo/` (or its platform fallback). It reports an actionable
 timeout or missing-project-dependency error instead of fabricating either URL
 or a QR.
 

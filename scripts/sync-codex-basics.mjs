@@ -5,10 +5,13 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const coreSkills = join(repoRoot, ".agents", "skills");
+const coreShared = join(repoRoot, ".agents", "shared");
 const adapterRoot = join(repoRoot, "platforms", "codex");
 const packageRoot = join(repoRoot, "plugins", "basics");
 const packageSkills = join(packageRoot, "skills");
+const packageShared = join(packageRoot, "shared");
 const checkOnly = process.argv.includes("--check");
+const refresh = process.argv.includes("--refresh");
 
 function files(root, base = root) {
   const result = [];
@@ -51,18 +54,19 @@ function adapterMatchesPackage() {
   return filesToCheck.every(([source, destination]) => sameFile(source, destination));
 }
 
-if (!existsSync(coreSkills)) throw new Error(`canonical skills are missing: ${coreSkills}`);
+if (!existsSync(coreSkills) || !existsSync(coreShared)) throw new Error("canonical skills or shared resources are missing");
 if (checkOnly) {
-  if (!sameTree(coreSkills, packageSkills) || !adapterMatchesPackage()) {
+  if (!sameTree(coreSkills, packageSkills) || !sameTree(coreShared, packageShared) || !adapterMatchesPackage()) {
     throw new Error("Codex package drift from .agents/skills or platforms/codex; run scripts/sync-codex-basics.mjs");
   }
   process.stdout.write("Codex Basics package matches the canonical skills.\n");
   process.exit(0);
 }
-if (existsSync(packageSkills)) throw new Error(`refusing to overwrite ${packageSkills}; remove or archive that generated package explicitly, then rerun`);
+if (existsSync(packageSkills) && !refresh) throw new Error(`refusing to overwrite ${packageSkills}; rerun with --refresh to update the generated package in place`);
 
 mkdirSync(packageRoot, { recursive: true });
 cpSync(coreSkills, packageSkills, { recursive: true });
+cpSync(coreShared, packageShared, { recursive: true });
 for (const skill of readdirSync(join(adapterRoot, "metadata"))) {
   const source = join(adapterRoot, "metadata", skill);
   if (statSync(source).isDirectory()) cpSync(source, join(packageSkills, skill, "agents"), { recursive: true });

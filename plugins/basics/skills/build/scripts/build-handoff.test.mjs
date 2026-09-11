@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -124,6 +124,26 @@ test("routine task authorization binds a concrete request without a second confi
 
     writeFileSync(authorizationPath, `${JSON.stringify(unattendedAuthorizations(), null, 2)}\n`);
     assert.throws(() => authorizeRoutine({ "status-dir": statusDir, plan: planPath, scope: scopePath, authorizations: authorizationPath, event: "task-request" }), /explicit approval/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("existing runs reuse their recorded worktree after the configured root changes", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-existing-worktree-"));
+  const statusDir = join(root, "status");
+  const legacyRoot = join(root, "legacy-root");
+  const configuredRoot = join(root, "configured-root");
+  mkdirSync(legacyRoot);
+  mkdirSync(configuredRoot);
+  const options = { "status-dir": statusDir, run: "run-one", repo: "fixture", base: "abc", branch: "build/run-one" };
+  try {
+    initialize({ ...options, environment: { BASICS_TEMP_ROOT: legacyRoot } });
+    const reused = initialize({ ...options, environment: { BASICS_TEMP_ROOT: configuredRoot } });
+    const ledger = JSON.parse(readFileSync(join(statusDir, "handoffs", "run-ledger.json"), "utf8"));
+
+    assert.equal(reused.reused, true);
+    assert.equal(ledger.worktree.root, legacyRoot);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

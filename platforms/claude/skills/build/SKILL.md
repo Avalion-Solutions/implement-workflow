@@ -11,7 +11,7 @@ Deliver a reviewed integration branch while keeping planning, execution, and mer
 ## Source and run setup
 
 
-Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It preflights `BASICS_WORKTREE_ROOT` or the platform temporary fallback. `build-handoff.mjs init` records its absolute paths; every child lane inherits them.
+Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It resolves `BASICS_TEMP_ROOT`, then the deprecated Build-only `BASICS_WORKTREE_ROOT`, then the platform temporary directory, and preflights the selected root. `build-handoff.mjs init` records its absolute paths; every child lane inherits them.
 
 Create only after checking that the recorded path and branch do not exist:
 
