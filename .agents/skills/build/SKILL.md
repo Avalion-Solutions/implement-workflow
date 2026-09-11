@@ -14,7 +14,7 @@ Dashboard code and tests live in `assets/dashboard/`.
 
 Use `model: "gpt-5.6-sol"` and `reasoning_effort: "xhigh"` when available. Inspect `AGENTS.md`, repository state, and validation commands. Require a clean source worktree.
 
-Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It preflights `BASICS_WORKTREE_ROOT` or the platform temporary fallback. `build-handoff.mjs init` records its absolute paths; every child lane inherits them.
+Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It resolves `BASICS_TEMP_ROOT`, then the deprecated Build-only `BASICS_WORKTREE_ROOT`, then the platform temporary directory, and preflights the selected root. `build-handoff.mjs init` records its absolute paths; every child lane inherits them.
 
 Create only after checking that the recorded path and branch do not exist:
 

@@ -23,4 +23,4 @@ Use this skill when the main problem is not yet enough evidence.
 - For failed tools, commands, tests, or validation loops, read `references/error-recovery-loop.md`.
 ## Scripts
 
-- Use `scripts/new_debug_cycle.js <topic> [log-dir]` to create a stable bug ID and initialize a log file.
+- Use `scripts/new_debug_cycle.js <topic> [log-dir]` to create a stable bug ID and initialize a log file. Without an explicit `log-dir`, it writes beneath `BASICS_TEMP_ROOT/agent-workflows/debug/<topic>/` (or the platform fallback).

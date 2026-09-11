@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statfsSync, statSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_PROJECT, resolveTempLocation, tempPath } from "../../../shared/temp-location.mjs";
@@ -38,16 +37,16 @@ function inspectRoot(path, minimumFreeBytes = DEFAULT_MINIMUM_FREE_BYTES, operat
   const realpath = operations.realpath || realpathSync;
   const statfs = operations.statfs || statfsSync;
   const findMount = operations.mountInfo || mountInfoFor;
-  if (!exists(path)) throw new Error(`BASICS_WORKTREE_ROOT does not exist: ${path}`);
-  if (!stat(path).isDirectory()) throw new Error(`BASICS_WORKTREE_ROOT is not a directory: ${path}`);
-  try { access(path, constants.W_OK | constants.X_OK); } catch { throw new Error(`BASICS_WORKTREE_ROOT is not writable and searchable: ${path}`); }
+  if (!exists(path)) throw new Error(`temporary root does not exist: ${path}`);
+  if (!stat(path).isDirectory()) throw new Error(`temporary root is not a directory: ${path}`);
+  try { access(path, constants.W_OK | constants.X_OK); } catch { throw new Error(`temporary root is not writable and searchable: ${path}`); }
   const root = realpath(path);
   const filesystem = statfs(root);
   const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
-  if (availableBytes < minimumFreeBytes) throw new Error(`BASICS_WORKTREE_ROOT has ${availableBytes} free bytes; ${minimumFreeBytes} required`);
+  if (availableBytes < minimumFreeBytes) throw new Error(`temporary root has ${availableBytes} free bytes; ${minimumFreeBytes} required`);
   const mount = findMount(root);
-  if (mount && NETWORK_FILESYSTEMS.has(mount.filesystem)) throw new Error(`BASICS_WORKTREE_ROOT uses unsupported network filesystem ${mount.filesystem}`);
-  if (mount?.options.has("ro") || mount?.options.has("noexec")) throw new Error(`BASICS_WORKTREE_ROOT has incompatible mount options: ${[...mount.options].filter((option) => option === "ro" || option === "noexec").join(",")}`);
+  if (mount && NETWORK_FILESYSTEMS.has(mount.filesystem)) throw new Error(`temporary root uses unsupported network filesystem ${mount.filesystem}`);
+  if (mount?.options.has("ro") || mount?.options.has("noexec")) throw new Error(`temporary root has incompatible mount options: ${[...mount.options].filter((option) => option === "ro" || option === "noexec").join(",")}`);
   return { root, availableBytes, filesystem: mount?.filesystem || "unknown", mountPoint: mount?.mountPoint || null };
 }
 
@@ -55,7 +54,7 @@ function resolveBuildWorktree(options = {}) {
   const environment = options.environment || process.env;
   const runId = String(options.runId || "").trim();
   if (!runId || runId.includes("/") || runId.includes("\\") || runId === "." || runId === "..") throw new Error("runId must be one safe path segment");
-  const location = resolveTempLocation({ environment, platformTemporaryRoot: options.fallbackRoot || tmpdir() });
+  const location = resolveTempLocation({ environment, platformTemporaryRoot: options.fallbackRoot });
   const candidate = resolve(location.root);
   const inspected = (options.inspect || inspectRoot)(candidate, options.minimumFreeBytes || DEFAULT_MINIMUM_FREE_BYTES);
   const runRoot = tempPath({ ...location, root: inspected.root }, { project: options.project || DEFAULT_PROJECT, topic: "build-runs", name: runId });

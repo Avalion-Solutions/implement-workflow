@@ -9,17 +9,25 @@ import { mountInfoFor } from "./worktree-root.mjs";
 
 const local = (root) => ({ root: resolve(root), availableBytes: 10_000_000_000, filesystem: "ext4", mountPoint: root });
 
-test("configured root owns every Build lane while status remains independent", () => {
-  const worktree = resolveBuildWorktree({ runId: "circle run", environment: { BASICS_WORKTREE_ROOT: "/temp/build space", BASICS_RUNS_DIR: "/durable/status" }, inspect: local });
-  assert.equal(worktree.root, "/temp/build space");
-  assert.equal(worktree.integration, "/temp/build space/build-runs/circle run/integration");
+test("configured root owns project-contained Build lanes while status remains independent", () => {
+  const worktree = resolveBuildWorktree({ runId: "circle run", environment: { BASICS_TEMP_ROOT: "/temp", BASICS_RUNS_DIR: "/durable/status" }, inspect: local });
+  assert.equal(worktree.root, "/temp");
+  assert.equal(worktree.integration, "/temp/agent-workflows/build-runs/circle run/integration");
   assert.doesNotMatch(worktree.runRoot, /durable\/status/);
 });
 
 test("unset configuration uses the centralized platform temporary root", () => {
   const worktree = resolveBuildWorktree({ runId: "fallback", environment: {}, fallbackRoot: "/portable/tmp", inspect: local });
-  assert.equal(worktree.source, "os-tmpdir");
-  assert.equal(worktree.runRoot, "/portable/tmp/build-runs/fallback");
+  assert.equal(worktree.source, "platform-temp");
+  assert.equal(worktree.runRoot, "/portable/tmp/agent-workflows/build-runs/fallback");
+});
+
+test("legacy Build root remains a fallback when no general root is configured", () => {
+  const worktree = resolveBuildWorktree({ runId: "legacy", environment: { BASICS_WORKTREE_ROOT: "/legacy" }, inspect: local });
+  assert.equal(worktree.source, "BASICS_WORKTREE_ROOT");
+  assert.equal(worktree.runRoot, "/legacy/agent-workflows/build-runs/legacy");
+  const preferred = resolveBuildWorktree({ runId: "preferred", environment: { BASICS_TEMP_ROOT: "/new", BASICS_WORKTREE_ROOT: "/legacy" }, inspect: local });
+  assert.equal(preferred.root, "/new");
 });
 
 test("preflight failures happen during resolution", () => {

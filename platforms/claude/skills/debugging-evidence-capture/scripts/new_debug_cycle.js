@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { resolveTempLocation, tempPath } from "../../../shared/temp-location.mjs";
 
 function slug(value) {
   return String(value ?? "debug")
@@ -14,8 +15,11 @@ const topic = slug(process.argv[2]);
 const now = new Date();
 const stamp = now.toISOString().replace(/[-:]/g, "").replace(/T/, "-").slice(0, 15);
 const trackingId = `bug-${stamp}-${topic}`;
-const logDir = process.argv[3] || "debug-logs";
-const logPath = join(logDir, `${trackingId}.log`);
+const requestedLogDir = process.argv[3];
+const logPath = requestedLogDir
+  ? join(requestedLogDir, `${trackingId}.log`)
+  : tempPath(resolveTempLocation(), { topic: `debug/${topic}`, name: `${trackingId}.log` });
+const logDir = dirname(logPath);
 
 mkdirSync(logDir, { recursive: true });
 writeFileSync(logPath, "", { flag: "a" });

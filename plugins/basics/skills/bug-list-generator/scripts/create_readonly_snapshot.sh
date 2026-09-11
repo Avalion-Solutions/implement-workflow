@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+temp_location_resolver="$script_directory/../../../shared/temp-location.mjs"
+
+temporary_path() {
+  node "$temp_location_resolver" path "$@"
+}
+
 usage() {
   echo "Usage: $0 <create|hash|cleanup> <directory>" >&2
   exit 2
@@ -30,8 +37,9 @@ case "$mode" in
   create)
     source_dir="$(realpath "$target")"
     [[ -d "$source_dir" ]] || { echo "Source directory does not exist: $target" >&2; exit 1; }
-    temp_root="$(realpath -m "${TMPDIR:-/tmp}")"
-    snapshot_dir="$(mktemp -d "$temp_root/bug-list-generator-snapshot.XXXXXX")"
+    snapshot_template="$(temporary_path --topic snapshots/bug-list-generator --name snapshot.XXXXXX)"
+    mkdir -p "$(dirname "$snapshot_template")"
+    snapshot_dir="$(mktemp -d "$snapshot_template")"
     cleanup_on_error=true
     trap 'if [[ "${cleanup_on_error:-false}" == true ]]; then chmod -R u+w "$snapshot_dir" 2>/dev/null || true; rm -rf -- "$snapshot_dir"; fi' EXIT
     cp -a "$source_dir"/. "$snapshot_dir"/
@@ -51,9 +59,9 @@ case "$mode" in
     ;;
   cleanup)
     snapshot_dir="$(realpath "$target")"
-    temp_root="$(realpath -m "${TMPDIR:-/tmp}")"
+    snapshot_parent="$(dirname "$(temporary_path --topic snapshots/bug-list-generator --name snapshot.placeholder)")"
     case "$snapshot_dir" in
-      "$temp_root"/bug-list-generator-snapshot.*) ;;
+      "$snapshot_parent"/snapshot.*) ;;
       *) echo "Refusing to clean an unrecognized snapshot path: $snapshot_dir" >&2; exit 1 ;;
     esac
     [[ -f "$snapshot_dir/.bug-list-generator-snapshot" ]] || { echo "Snapshot marker is missing: $snapshot_dir" >&2; exit 1; }

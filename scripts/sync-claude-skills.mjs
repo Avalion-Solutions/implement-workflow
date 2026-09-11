@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = join(root, ".agents", "skills");
+const sourceShared = join(root, ".agents", "shared");
 const adapterRoot = join(root, "platforms", "claude");
 const destinationRoot = join(adapterRoot, "skills");
+const destinationShared = join(adapterRoot, "shared");
 const checkOnly = process.argv.includes("--check");
 const refresh = process.argv.includes("--refresh");
 
@@ -80,15 +82,17 @@ function expectedFiles() {
 }
 
 function matches() {
-  if (!existsSync(destinationRoot)) return false;
+  if (!existsSync(destinationRoot) || !existsSync(destinationShared)) return false;
   const expected = expectedFiles();
   const actual = listFiles(destinationRoot);
   if (JSON.stringify(expected) !== JSON.stringify(actual)) return false;
   return expected.every((path) => readFileSync(join(destinationRoot, path), "utf8")
-    === adapt(readFileSync(join(sourceRoot, path), "utf8")));
+    === adapt(readFileSync(join(sourceRoot, path), "utf8")))
+    && JSON.stringify(listFiles(sourceShared)) === JSON.stringify(listFiles(destinationShared))
+    && listFiles(sourceShared).every((path) => readFileSync(join(sourceShared, path), "utf8") === readFileSync(join(destinationShared, path), "utf8"));
 }
 
-if (!existsSync(sourceRoot)) throw new Error(`canonical skills are missing: ${sourceRoot}`);
+if (!existsSync(sourceRoot) || !existsSync(sourceShared)) throw new Error("canonical skills or shared resources are missing");
 if (checkOnly) {
   if (!matches()) throw new Error("Claude adapter drift from .agents/skills; run scripts/sync-claude-skills.mjs");
   process.stdout.write("Claude adapter matches the canonical skills with its documented capability exclusions.\n");
@@ -103,5 +107,10 @@ for (const path of expectedFiles()) {
   const destination = join(destinationRoot, path);
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, adapt(readFileSync(join(sourceRoot, path), "utf8")));
+}
+for (const path of listFiles(sourceShared)) {
+  const destination = join(destinationShared, path);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, readFileSync(join(sourceShared, path), "utf8"));
 }
 process.stdout.write(`Created ${destinationRoot} from .agents/skills.\n`);
