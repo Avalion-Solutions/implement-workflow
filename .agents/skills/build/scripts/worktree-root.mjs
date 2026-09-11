@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync, statfsSy
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_PROJECT, resolveTempLocation, tempPath } from "../../../shared/temp-location.mjs";
 
 const NETWORK_FILESYSTEMS = new Set(["9p", "afs", "ceph", "cifs", "fuse.sshfs", "nfs", "nfs4", "smb3", "smbfs"]);
 const DEFAULT_MINIMUM_FREE_BYTES = 1024 ** 3;
@@ -54,13 +55,13 @@ function resolveBuildWorktree(options = {}) {
   const environment = options.environment || process.env;
   const runId = String(options.runId || "").trim();
   if (!runId || runId.includes("/") || runId.includes("\\") || runId === "." || runId === "..") throw new Error("runId must be one safe path segment");
-  const configured = String(environment.BASICS_WORKTREE_ROOT || "").trim();
-  const candidate = resolve(configured || options.fallbackRoot || tmpdir());
+  const location = resolveTempLocation({ environment, platformTemporaryRoot: options.fallbackRoot || tmpdir() });
+  const candidate = resolve(location.root);
   const inspected = (options.inspect || inspectRoot)(candidate, options.minimumFreeBytes || DEFAULT_MINIMUM_FREE_BYTES);
-  const runRoot = join(inspected.root, "build-runs", runId);
+  const runRoot = tempPath({ ...location, root: inspected.root }, { project: options.project || DEFAULT_PROJECT, topic: "build-runs", name: runId });
   return {
     ...inspected,
-    source: configured ? "BASICS_WORKTREE_ROOT" : "os-tmpdir",
+    source: location.source,
     runRoot,
     integration: join(runRoot, "integration"),
   };
