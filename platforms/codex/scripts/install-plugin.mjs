@@ -207,7 +207,7 @@ function nonblank(value) {
 }
 
 function fileValue(content) {
-  const match = content.match(/^\s*(?:export\s+)?BASICS_TEMP_ROOT\s*=\s*(.*?)\s*$/m);
+  const match = content.match(/^\s*(?:export\s+|readonly\s+)?BASICS_TEMP_ROOT\s*=\s*(.*?)\s*$/m);
   if (!match) return null;
   return match[1].trim().replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
 }
