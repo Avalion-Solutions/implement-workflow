@@ -31,7 +31,7 @@ The approved plan, scope file, criterion IDs, and Blue changed paths are the Bui
 
 ## Recorded worktree root
 
-Build initialization resolves `BASICS_WORKTREE_ROOT` once through `scripts/worktree-root.mjs`, preflights the selected filesystem before Git mutation, and stores the absolute root, run root, and integration path in `run-ledger.json`. The environment variable controls disposable worktrees and large build artifacts only; `BASICS_RUNS_DIR` continues to control durable status archives. Every Blue, Red snapshot, Fixer, Judge, and integration prompt must receive paths below the ledger-recorded run root. Reject child-selected roots or environment overrides. When unset, use only the helper's platform temporary-directory fallback; do not embed `/tmp` or `/var/tmp` in prompts.
+Build initialization resolves `BASICS_TEMP_ROOT` once through `scripts/worktree-root.mjs`, with nonblank `BASICS_WORKTREE_ROOT` retained only as a deprecated Build fallback, then preflights the selected filesystem before Git mutation. It stores the absolute root, project-contained run root, and integration path in `run-ledger.json`. The temporary-root variables control disposable worktrees and large build artifacts only; `BASICS_RUNS_DIR` continues to control durable status archives. Every Blue, Red snapshot, Fixer, Judge, and integration prompt must receive paths below the ledger-recorded run root. Reject child-selected roots or environment overrides. When neither configured value is present, use only the helper's platform temporary-directory fallback; do not embed host-specific temporary paths in prompts.
 
 All low-context handoffs live below `<status-dir>`:
 

@@ -14,8 +14,13 @@ branch.
 Inspect repository instructions, release/version manifests, branch topology,
 worktrees, and status before changing Git state. Require clean `main` and
 `devel` worktrees, no existing release branch for the target version, and an
-explicit user request to perform the release. Never push, install, or publish
-unless the user separately authorizes that action.
+explicit user request to perform the release. The only exception is an
+explicit recovery request naming an existing release branch. For that case,
+verify its worktree is clean, its product version is the intended release, and
+its history is recoverable; merge the current verified `devel` candidate into
+that release with an explicit merge commit instead of recreating, resetting,
+or rebasing it. Never push, install, or publish unless the user separately
+authorizes that action.
 
 ## Patch-release flow
 

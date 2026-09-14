@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +69,24 @@ test("configures one-command tunnel and local launch scripts without disturbing 
   assert.equal(configured.dependencies.react, "19.1.0");
   assert.notEqual(configured, source);
   assert.equal(source.scripts.start, "old-command");
+});
+
+test("documented copied launcher runs from the target Expo project", async () => {
+  const root = await createFakeExpoProject("expo-run-copied-launcher-");
+  const scripts = join(root, "scripts");
+  await mkdir(scripts, { recursive: true });
+  await writeFile(
+    join(scripts, "expo-go-launch.mjs"),
+    await readFile(new URL("../.agents/skills/expo-run/scripts/expo-go-launch.mjs", import.meta.url)),
+  );
+
+  const result = spawnSync(process.execPath, [join(scripts, "expo-go-launch.mjs"), "local"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stderr, /ERR_MODULE_NOT_FOUND|Cannot find module/);
 });
 
 test("rejects non-Expo packages and reports project-local launcher dependencies", () => {

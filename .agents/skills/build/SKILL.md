@@ -5,16 +5,16 @@ description: Run a bounded-unattended feature workflow with one approval only fo
 
 # Build
 
-Deliver a reviewed integration branch while keeping planning, execution, and merge authority separate. Never merge to a protected user branch without explicit current approval.
+Deliver a reviewed branch; keep planning, execution, and merge authority separate. Never merge to a protected branch without explicit approval.
 
 Read [references/orchestration-contract.md](references/orchestration-contract.md) and [references/status-protocol.md](references/status-protocol.md). Use `scripts/build-handoff.mjs` for manifests, ledger, approvals, receipts, and reporting.
-Dashboard code and tests live in `assets/dashboard/`.
+Dashboard lives in `assets/dashboard/`.
 
 ## Source and run setup
 
 Use `model: "gpt-5.6-sol"` and `reasoning_effort: "xhigh"` when available. Inspect `AGENTS.md`, repository state, and validation commands. Require a clean source worktree.
 
-Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It preflights `BASICS_WORKTREE_ROOT` or the platform temporary fallback. `build-handoff.mjs init` records its absolute paths; every child lane inherits them.
+Before Git mutation, run `scripts/worktree-root.mjs resolve --run <run-id>`. It resolves `BASICS_TEMP_ROOT`, then deprecated Build-only `BASICS_WORKTREE_ROOT`, then platform temp, and preflights the root. `build-handoff.mjs init` records absolute paths; every child lane inherits them.
 
 Create only after checking that the recorded path and branch do not exist:
 
@@ -87,9 +87,11 @@ Progress follows stage milestones. Add generic events only for approvals, valida
 
 ## Delivery
 
-Generate `docs/build/<run-id>-report.md`, verify `git diff --check`, and commit it. Return outcome, readiness, dashboard URL, branch/commit, and artifact links. End with exactly `Ready for explicit merge approval` or `Not ready for merge approval`.
+Before merge readiness or a protected-branch merge, apply the fail-closed [release-routing gate](references/release-routing.md). Carry its result through continuations and handoffs.
 
-Readiness requires current plan, scope, and authorization approval, green relevant validation, a completed scoped Red pass, all eligible Red finding IDs fixed and accepted by the single Fixer/Judge pass (or Fixer explicitly not required), and no in-scope blockers. Deferred findings are reported as residual risk and do not block Build readiness. The report commit never authorizes merging to the protected branch.
+Commit `docs/build/<run-id>-report.md` after `git diff --check`. Return outcome, readiness, dashboard URL, branch/commit, artifacts, and release routing. End with exactly `Ready for explicit merge approval` or `Not ready for merge approval`.
+
+Readiness requires approved current plan, scope, and authorization; green validation; completed scoped Red; accepted eligible fixes (or Fixer not required); and no in-scope blockers. Deferred findings remain residual risk without blocking readiness. The report commit never authorizes a protected-branch merge.
 
 Remove only Build-created temporary snapshots and child worktrees whose commits are merged or intentionally retained. Keep the integration branch/worktree, durable status archive, reports, and all blocking or unmerged artifacts.
 
