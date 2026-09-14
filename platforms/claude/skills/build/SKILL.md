@@ -83,9 +83,11 @@ Progress follows stage milestones. Add generic events only for approvals, valida
 
 ## Delivery
 
-Generate `docs/build/<run-id>-report.md`, verify `git diff --check`, and commit it. Return outcome, readiness, dashboard URL, branch/commit, and artifact links. End with exactly `Ready for explicit merge approval` or `Not ready for merge approval`.
+Before merge readiness or a protected-branch merge, apply the fail-closed [release-routing gate](references/release-routing.md). Carry its result through continuations and handoffs.
 
-Readiness requires current plan, scope, and authorization approval, green relevant validation, a completed scoped Red pass, all eligible Red finding IDs fixed and accepted by the single Fixer/Judge pass (or Fixer explicitly not required), and no in-scope blockers. Deferred findings are reported as residual risk and do not block Build readiness. The report commit never authorizes merging to the protected branch.
+Commit `docs/build/<run-id>-report.md` after `git diff --check`. Return outcome, readiness, dashboard URL, branch/commit, artifacts, and release routing. End with exactly `Ready for explicit merge approval` or `Not ready for merge approval`.
+
+Readiness requires approved current plan, scope, and authorization; green validation; completed scoped Red; accepted eligible fixes (or Fixer not required); and no in-scope blockers. Deferred findings remain residual risk without blocking readiness. The report commit never authorizes a protected-branch merge.
 
 Remove only Build-created temporary snapshots and child worktrees whose commits are merged or intentionally retained. Keep the integration branch/worktree, durable status archive, reports, and all blocking or unmerged artifacts.
 
