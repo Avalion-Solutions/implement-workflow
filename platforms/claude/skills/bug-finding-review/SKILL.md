@@ -7,6 +7,8 @@ description: Review code, designs, or bug reports for likely defects, faulty ass
 
 Use this skill to find plausible defects and sharpen debugging hypotheses before changing code.
 
+For AutoHotkey reviews, use the analyzer and built-in-name list under `scripts/` as described in [references/ahk-no-shadow.md](references/ahk-no-shadow.md).
+
 ## Workflow
 
 1. State the reviewed behavior, contract, and files or traces under review.

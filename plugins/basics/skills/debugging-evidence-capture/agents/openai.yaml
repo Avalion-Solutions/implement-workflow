@@ -1,0 +1,4 @@
+interface:
+  display_name: "Debugging Evidence Capture"
+  short_description: "Capture minimal reproducible failure evidence"
+  default_prompt: "Use $basics:debugging-evidence-capture to capture a minimal reproduction and recovery evidence for this failure."

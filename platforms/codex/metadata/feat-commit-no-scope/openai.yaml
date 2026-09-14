@@ -1,0 +1,4 @@
+interface:
+  display_name: "Commit Without Scope"
+  short_description: "Create concise scope-free commit subjects"
+  default_prompt: "Use $basics:feat-commit-no-scope to create a concise Conventional Commit subject without a parenthesized scope."

@@ -116,10 +116,13 @@ test("RT-FINAL-003: generic gpt identifiers cannot survive generation and drift 
   const fixtureRoot = mkdtempSync(join(tmpdir(), "claude-adapter-regression-"));
   const fixtureScript = join(fixtureRoot, "scripts", "sync-claude-skills.mjs");
   const fixtureSource = join(fixtureRoot, ".agents", "skills", "future", "SKILL.md");
+  const fixtureShared = join(fixtureRoot, ".agents", "shared", "temp-location.mjs");
   mkdirSync(dirname(fixtureScript), { recursive: true });
   mkdirSync(dirname(fixtureSource), { recursive: true });
+  mkdirSync(dirname(fixtureShared), { recursive: true });
   copyFileSync(join(root, "scripts", "sync-claude-skills.mjs"), fixtureScript);
   writeFileSync(fixtureSource, "Use gpt-4.1 for this future role.\n");
+  copyFileSync(join(root, ".agents", "shared", "temp-location.mjs"), fixtureShared);
 
   const generated = spawnSync(process.execPath, [fixtureScript], { encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);

@@ -8,8 +8,8 @@ description: Validate a Codex skill's structure, resource integrity, and design 
 Run both checks against the requested skill directory:
 
 ```bash
-python3 /home/raptorx/.codex/skills/.system/skill-creator/scripts/quick_validate.py <skill-dir>
-python3 <loaded-skill-check-root>/scripts/check_skill.py <skill-dir>
+node <loaded-skill-check-root>/scripts/quick-validate.mjs <skill-dir>
+node <loaded-skill-check-root>/scripts/check-skill.mjs <skill-dir>
 ```
 
 Resolve `<loaded-skill-check-root>` to the directory containing this `SKILL.md`; do not substitute another globally installed `skill-check` copy. The bundled checker understands suite-level sibling links such as `../build/SKILL.md` while still rejecting arbitrary directory escapes.

@@ -31,7 +31,7 @@ The approved plan, scope file, criterion IDs, and Blue changed paths are the Bui
 
 ## Recorded worktree root
 
-Build initialization resolves `BASICS_WORKTREE_ROOT` once through `scripts/worktree-root.mjs`, preflights the selected filesystem before Git mutation, and stores the absolute root, run root, and integration path in `run-ledger.json`. The environment variable controls disposable worktrees and large build artifacts only; `BASICS_RUNS_DIR` continues to control durable status archives. Every Blue, Red snapshot, Fixer, Judge, and integration prompt must receive paths below the ledger-recorded run root. Reject child-selected roots or environment overrides. When unset, use only the helper's platform temporary-directory fallback; do not embed `/tmp` or `/var/tmp` in prompts.
+Build initialization resolves `BASICS_TEMP_ROOT` once through `scripts/worktree-root.mjs`, with nonblank `BASICS_WORKTREE_ROOT` retained only as a deprecated Build fallback, then preflights the selected filesystem before Git mutation. It stores the absolute root, project-contained run root, and integration path in `run-ledger.json`. The temporary-root variables control disposable worktrees and large build artifacts only; `BASICS_RUNS_DIR` continues to control durable status archives. Every Blue, Red snapshot, Fixer, Judge, and integration prompt must receive paths below the ledger-recorded run root. Reject child-selected roots or environment overrides. When neither configured value is present, use only the helper's platform temporary-directory fallback; do not embed host-specific temporary paths in prompts.
 
 All low-context handoffs live below `<status-dir>`:
 
@@ -84,9 +84,14 @@ node <skill>/scripts/build-handoff.mjs time-budget --status-dir <status-dir>
 
 `record` updates `run-ledger.json` atomically and prints the compact receipt to return upstream. The ledger is the parent's stage-close memory; raw logs and earlier manifests are not conversational payload.
 
-## Approval provenance
+## Authorization provenance
 
-Before requesting approval, write and validate an authorization manifest:
+For a concrete implementation request, write and validate a bounded-unattended
+authorization manifest. Classify ordinary scoped edits, tests, local branches,
+and local commits as `authority: "task"`; the request itself authorizes them.
+Use `authority: "explicit"` only for irreversible/destructive actions,
+protected-branch history changes or merges, and external publication. If any
+operation is explicit, ask once for the complete sensitive-operation inventory.
 
 ```json
 {
@@ -101,9 +106,9 @@ Before requesting approval, write and validate an authorization manifest:
     "stopConditions": [{ "id": "STOP-001", "condition": "an action exceeds approved targets, consequence, cost, attempts, or integrity invariants", "reason": "new user authority is required" }]
   },
   "operations": [
-    { "id": "AUTH-001", "category": "external-systems", "action": "exact primary command", "targets": ["exact account/resource/path"], "consequence": "what changes and the information/security/cost impact", "bounds": "limits that make this authority safe for unattended use" },
-    { "id": "AUTH-REC-001", "category": "recovery", "trigger": "exact observable failure from AUTH-001", "action": "exact fallback command", "targets": ["same bounded target"], "consequence": "effect of the fallback", "bounds": "preserved version, security, cost, and resource limits", "dependsOn": ["AUTH-001"], "maxAttempts": 1 },
-    { "id": "AUTH-DER-001", "category": "external-systems", "action": "import --approval approve:${resolved.sha256}", "targets": ["exact derived artifact and destination"], "consequence": "effect of consuming the verified artifact", "bounds": "approved source and fixed invariants only", "dependsOn": ["AUTH-001"], "derivation": { "inputs": ["exact materialized artifact"], "procedure": "deterministic value computation", "validation": "invariants required before substitution" } }
+    { "id": "AUTH-001", "authority": "task", "category": "filesystem", "action": "exact scoped implementation command", "targets": ["exact repository paths"], "consequence": "updates only the requested implementation", "bounds": "stated task scope and repository checks" },
+    { "id": "AUTH-REC-001", "authority": "task", "category": "recovery", "trigger": "exact observable failure from AUTH-001", "action": "exact fallback command", "targets": ["same bounded target"], "consequence": "effect of the fallback", "bounds": "preserved version, security, and resource limits", "dependsOn": ["AUTH-001"], "maxAttempts": 1 },
+    { "id": "AUTH-PUB-001", "authority": "explicit", "category": "external-systems", "action": "exact publication command", "targets": ["exact remote or service destination"], "consequence": "publishes the reviewed result outside the local workspace", "bounds": "named destination and release/version only" }
   ],
   "excluded": [{ "id": "AUTH-X01", "action": "protected branch merge", "reason": "requires separate current approval" }],
   "unresolved": [],
@@ -111,16 +116,26 @@ Before requesting approval, write and validate an authorization manifest:
 }
 ```
 
-All seven categories must be reviewed even when no operation is needed. `execution.mode` is `interactive` or `bounded-unattended`; omitted legacy mode is interactive. Unattended mode requires a retry cap and explicit stop conditions. Operations use stable IDs and exact bounded targets; optional `trigger`, `dependsOn`, `maxAttempts`, and `derivation` fields define preauthorized branches without changing the approved manifest. A derivation names exact inputs, a deterministic procedure, validation invariants, and an action placeholder. Wildcards, blanket future authority, and unspecified destructive actions are invalid.
+All seven categories must be reviewed even when no operation is needed. Concrete implementation requests use `execution.mode: "bounded-unattended"`; reserve `interactive` for a user-requested staged workflow. Unattended mode requires a retry cap and explicit stop conditions. Every operation has `authority: "task"` or `authority: "explicit"`; omitted legacy authority is explicit. Operations use stable IDs and exact bounded targets; optional `trigger`, `dependsOn`, `maxAttempts`, and `derivation` fields define bounded branches without changing the manifest. A derivation names exact inputs, a deterministic procedure, validation invariants, and an action placeholder. Wildcards, blanket future authority, and unspecified destructive actions are invalid.
 
-`excluded` records intentionally unapproved actions and `unresolved` must be empty before approval. Use read-only discovery and exact previews to materialize values before approval whenever possible. If a later value is unknowable but deterministic and fully validated, use a bounded derivation. If it requires a subjective choice, broader target, different identity, new consequence, weakened invariant, or unbounded cost, split before mutation and obtain approval while the user is present.
+`excluded` records intentionally unapproved actions and `unresolved` must be empty before binding. Use read-only discovery and exact previews to materialize values before an explicit approval whenever possible. If a later value is unknowable but deterministic and fully validated, use a bounded derivation. If it requires a subjective choice, broader target, different identity, new consequence, weakened invariant, unbounded cost, information loss, protected-branch change, or publication, split before mutation and obtain approval while the user is present.
 
 ```bash
 node <skill>/scripts/build-handoff.mjs validate-authorizations \
   --file <authorization-manifest> --run <run-id>
 ```
 
-After explicit approval, bind authority to the exact plan, scope, and authorization files:
+When every operation has `authority: "task"`, bind the user’s concrete request
+without another conversational approval:
+
+```bash
+node <skill>/scripts/build-handoff.mjs authorize-routine --status-dir <status-dir> \
+  --plan <plan-manifest> --scope <scope-file> \
+  --authorizations <authorization-manifest> --event task-request
+```
+
+When any operation has `authority: "explicit"`, obtain one consolidated
+approval, then bind authority to the exact plan, scope, and authorization files:
 
 ```bash
 node <skill>/scripts/build-handoff.mjs approve --status-dir <status-dir> \
@@ -131,9 +146,9 @@ node <skill>/scripts/build-handoff.mjs check-approval --status-dir <status-dir> 
   --operations AUTH-001,AUTH-REC-001
 ```
 
-Re-run `check-approval --operations <comma-separated-ids>` before seeding, each external mutation group, integration, and readiness. Any changed plan, scope, or authorization hash invalidates approval. Pass the manifest and applicable operation IDs to every execution agent.
+Re-run `check-approval --operations <comma-separated-ids>` before seeding, each external mutation group, integration, and readiness. Any changed plan, scope, or authorization hash invalidates the binding. Pass the manifest and applicable operation IDs to every execution agent.
 
-In `bounded-unattended` mode, agents must not ask again for a listed primary operation, fallback whose exact trigger is evidenced, or derived operation whose procedure and validation pass. Record actual commands, resolved values, trigger evidence, attempts, and outcomes in receipts without editing the approved manifest. Before announcing that unattended execution is armed, resolve every platform-enforced sandbox, network, credential, or scoped escalation prompt identified by preflight; the manifest never overrides host enforcement. If a new host prompt appears later, use an already granted capability or stop rather than bypassing it.
+In `bounded-unattended` mode, agents must not ask again for a listed task-authorized operation, fallback whose exact trigger is evidenced, or derived operation whose procedure and validation pass. Record actual commands, resolved values, trigger evidence, attempts, and outcomes in receipts without editing the bound manifest. Before announcing that unattended execution is armed, resolve every platform-enforced sandbox, network, credential, or scoped escalation prompt identified by preflight; the manifest never overrides host enforcement. If a new host prompt appears later, use an already granted capability or stop rather than bypassing it.
 
 Stop before any absent operation, exceeded bound or attempt limit, failed integrity invariant, unapproved information loss, material product/scope choice, new identity/target/consequence, or protected-branch merge. Repeated late prompts for knowable or reasonably foreseeable recovery are planning defects. Approval never authorizes a protected-branch merge.
 
@@ -161,7 +176,8 @@ After changing this suite, run:
 
 ```bash
 node --test build/scripts/build-handoff.test.mjs
-python3 <skill-check>/scripts/check_skill.py --strict <each-skill>
+node <skill-check>/scripts/quick-validate.mjs <each-skill>
+node <skill-check>/scripts/check-skill.mjs --strict <each-skill>
 ```
 
 If a package build fails only because shared `node_modules` is read-only, run the equivalent Vite build with `--configLoader runner` and record the environment caveat.

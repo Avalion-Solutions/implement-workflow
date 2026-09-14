@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bug Finding Review"
+  short_description: "Review likely defects and regression risks"
+  default_prompt: "Use $basics:bug-finding-review to inspect this work for likely defects, edge cases, and regression risks."

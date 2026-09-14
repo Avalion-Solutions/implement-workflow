@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hypothesis Instrumentation"
+  short_description: "Instrument focused debugging hypotheses"
+  default_prompt: "Use $basics:hypothesis-instrumentation to create minimal probes for these debugging hypotheses."

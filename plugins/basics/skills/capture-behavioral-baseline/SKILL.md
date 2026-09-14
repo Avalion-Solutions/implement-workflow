@@ -7,6 +7,8 @@ description: Capture current user-visible behavior as durable regression contrac
 
 Turn the current working stage into a verified regression baseline. Preserve behavior and public contracts without freezing incidental presentation or implementation details.
 
+Use [references/baseline-checklist.md](references/baseline-checklist.md) to confirm the captured contract covers failure, recovery, cleanup, and enforcement boundaries.
+
 ## Operating rules
 
 - Inspect the real repository and, when relevant, the running product before editing tests.

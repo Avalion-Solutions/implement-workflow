@@ -7,6 +7,8 @@ description: Audit whether user-visible behavior has adequate regression tests a
 
 Assess how safely a project can change without silently breaking working behavior. Default to a read-only audit: inspect, run existing gates, and report evidence without editing tests or production code.
 
+Use [references/audit-checklist.md](references/audit-checklist.md) as the compact completion checklist for complex audits.
+
 ## Operating rules
 
 - Treat a status or audit request as read-only. Implement hardening only when the user explicitly asks for changes.

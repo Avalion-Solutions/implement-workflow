@@ -1,6 +1,6 @@
 ---
 name: fix-release
-description: Prepare a one-off patch fix release from devel through main and back to devel with explicit merge commits.
+description: Prepare a one-off patch fix release from devel to main and devel with explicit release-branch merge commits.
 ---
 
 # Fix release
@@ -14,8 +14,13 @@ branch.
 Inspect repository instructions, release/version manifests, branch topology,
 worktrees, and status before changing Git state. Require clean `main` and
 `devel` worktrees, no existing release branch for the target version, and an
-explicit user request to perform the release. Never push, install, publish, or
-delete branches unless the user separately authorizes that action.
+explicit user request to perform the release. The only exception is an
+explicit recovery request naming an existing release branch. For that case,
+verify its worktree is clean, its product version is the intended release, and
+its history is recoverable; merge the current verified `devel` candidate into
+that release with an explicit merge commit instead of recreating, resetting,
+or rebasing it. Never push, install, or publish unless the user separately
+authorizes that action.
 
 ## Patch-release flow
 
@@ -31,12 +36,10 @@ delete branches unless the user separately authorizes that action.
    convention.
 5. Merge the release branch into `main` with an explicit merge commit. Verify
    the merged result before continuing.
-6. Merge `main` back into `devel` with an explicit merge commit so both
-   branches contain the release history. Verify branch topology and version
-   manifests on both branches.
-7. Before deleting `release/<next-patch-version>`, request confirmation that
-   names that exact branch and states that deleting it removes the local branch
-   reference. Delete it only after both merge commits are verified.
+6. Merge the same release branch directly into `devel` with an explicit merge
+   commit. Verify branch topology and version manifests on both branches, then
+   delete `release/<next-patch-version>` locally. Its commits are recoverable
+   from both verified merge commits.
 
 Stop for merge conflicts, a dirty worktree, failed checks, a version mismatch,
 or any release action outside the approved scope. Preserve all evidence and

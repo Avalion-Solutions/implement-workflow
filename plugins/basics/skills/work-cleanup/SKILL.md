@@ -23,7 +23,7 @@ current worktree and local-branch status only. Determine the documented
 protected integration branch first, then run the read-only inventory as:
 
 ```bash
-python3 <skill-dir>/scripts/worktree_inventory.py --report --base <branch>
+node <skill-dir>/scripts/worktree-inventory.mjs --report --base <branch>
 ```
 
 In report mode, preserve the four-column status table: worktree/path, branch
@@ -40,7 +40,7 @@ Run from the target repository. Identify the current branch and every registered
 ```bash
 git worktree list --porcelain
 git branch --all --verbose --no-abbrev
-python3 <skill-dir>/scripts/worktree_inventory.py
+node <skill-dir>/scripts/worktree-inventory.mjs
 ```
 
 The inventory also reads optional Markdown discovery hints from `<user-home>/.codex/notes/work-cleanup/*.md`; pass `--notes-dir <path>` only for an explicitly selected equivalent registry. A note path is never deletion authority. Report it as `note hint / needs investigation` until its existence, owning repository, Git registration, dirtiness, locks, merge evidence, and task/handoff activity are verified. Never migrate or delete a hinted path automatically.

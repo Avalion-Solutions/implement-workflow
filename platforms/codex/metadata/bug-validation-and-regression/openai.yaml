@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bug Validation and Regression"
+  short_description: "Validate bugs and fixes with focused checks"
+  default_prompt: "Use $basics:bug-validation-and-regression to validate this bug or fix with reproducible regression evidence."

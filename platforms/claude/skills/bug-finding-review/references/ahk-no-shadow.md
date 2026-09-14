@@ -16,7 +16,7 @@ Use this skill to run a lightweight no-shadow lint over AutoHotkey files.
 
 ## Files
 - scripts/run_no_shadowing.sh: shell entrypoint
-- scripts/no_shadowing.py: analyzer
+- scripts/no-shadowing.mjs: analyzer
 - scripts/ahk_builtin_names.txt: baseline built-in/reserved names
 
 These source files live under `scripts/` in this repo and are copied into the installed skill root during sync.

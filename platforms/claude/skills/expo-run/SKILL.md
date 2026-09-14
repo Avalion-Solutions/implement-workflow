@@ -55,7 +55,7 @@ unrelated package fields and scripts:
 `--check` is a non-mutating preview. The configurator rejects non-Expo
 packages; it never installs dependencies itself.
 
-## Launch Expo Go through a tunnel
+## Launch browser and Expo Go through one tunnel
 
 Run this only when the user has asked to launch the app and accepts opening a
 public tunnel:
@@ -70,16 +70,29 @@ The foreground launcher invokes the project's Expo CLI with exactly:
 start --go --tunnel --clear
 ```
 
-It waits for Expo to publish an actual `exp://...` URL. Only then does it
-render a terminal QR for that exact URL, save the same QR text and URL in a
-project-specific `.txt` file under the platform temporary directory, and print
-both the file path and URL. The launcher reports an actionable timeout or
-missing-project-dependency error instead of fabricating a QR or URL.
+It waits until Expo actually prints both a public `https://...` browser URL and
+an `exp://...` Expo Go URL. Only then does it render a terminal QR for that
+exact Expo Go URL and save the same QR text and URL in a project-specific
+`.txt` file under `BASICS_TEMP_ROOT/<project>/expo/` (or its platform fallback). It reports an actionable
+timeout or missing-project-dependency error instead of fabricating either URL
+or a QR.
 
-Read the generated QR text file and reproduce its contents in the agent's
-response. This is required even when terminal output is truncated. Report the
-`exp://` value as the **mobile tunnel**. Report a local endpoint only when Expo
-actually emitted it, label it **observed local endpoint**, and never promise a
+After both endpoints are confirmed, read the generated QR text file and issue
+this final report exactly, with no leading indentation and the actual terminal
+QR replacing `<terminal-qr>`:
+
+```text
+---
+Browser: https://xxx
+Expo Go: exp://xxx
+
+[TUI QR]
+<terminal-qr>
+---
+```
+
+This is required even when terminal output is truncated. Never derive one URL
+from the other, report a local-only endpoint as the browser URL, or promise a
 fixed port.
 
 ## Launch local Expo Web
@@ -102,9 +115,9 @@ checks must not invoke either launch command.
 
 ## Health, logs, and stop
 
-Observe the launcher's own output and Expo's emitted lines. Treat a published
-`exp://` URL as tunnel readiness; local URLs are only observations, not health
-guarantees. On timeout or early exit, report the first actionable Expo output
+Observe the launcher's own output and Expo's emitted lines. Treat both the
+observed public `https://` browser URL and `exp://` Expo Go URL as tunnel
+readiness. On timeout or early exit, report the first actionable Expo output
 and dependency guidance before changing commands.
 
 The launcher remains in the foreground. Stop it with Ctrl-C (or SIGTERM); it
@@ -115,8 +128,9 @@ port, or terminate a process that the launcher does not own.
 
 - A missing `@expo/ngrok` or `qrcode-terminal` is a project dependency issue:
   ask before installing it locally; do not substitute a global tool.
-- If no `exp://` URL appears before the timeout, inspect Expo output and the
-  tunnel/network configuration. There is no usable QR artifact in this state.
+- If either the public `https://` browser URL or `exp://` Expo Go URL is absent
+  before the timeout, inspect Expo output and the tunnel/network configuration.
+  There is no usable final report or QR artifact in this state.
 - Expo Web can fail when web dependencies are absent. Surface Expo's first
   error rather than adding packages or switching modes automatically.
 - A printed localhost or LAN URL is useful only when Expo actually printed it;

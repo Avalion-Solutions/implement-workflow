@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hypothesis Evaluation"
+  short_description: "Evaluate evidence against debug hypotheses"
+  default_prompt: "Use $basics:hypothesis-evaluation to evaluate these probe results and choose the next debugging step."

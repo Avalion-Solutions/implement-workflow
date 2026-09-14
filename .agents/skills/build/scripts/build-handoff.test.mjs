@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { approve, checkApproval, checkBudget, checkTimeBudget, compactReceipt, initialize, recordManifest, renderReport, validateAuthorizationManifest, validateManifest } from "./build-handoff.mjs";
+import { approve, authorizeRoutine, checkApproval, checkBudget, checkTimeBudget, compactReceipt, initialize, recordManifest, renderReport, validateAuthorizationManifest, validateManifest } from "./build-handoff.mjs";
 
 function manifest(overrides = {}) {
   return {
@@ -54,6 +54,21 @@ function unattendedAuthorizations(overrides = {}) {
   });
 }
 
+function routineAuthorizations(overrides = {}) {
+  return unattendedAuthorizations({
+    operations: [{
+      id: "AUTH-001",
+      authority: "task",
+      category: "filesystem",
+      action: "edit the requested repository files",
+      targets: ["src/requested-feature"],
+      consequence: "updates only the user-requested implementation",
+      bounds: "the stated task scope and existing repository checks",
+    }],
+    ...overrides,
+  });
+}
+
 test("manifest validation enforces the common envelope", () => {
   assert.deepEqual(validateManifest(manifest()), { ok: true, kind: "plan", runId: "run-one", stage: "brainstorm", status: "completed" });
   assert.throws(() => validateManifest({ ...manifest(), blockers: undefined }), /blockers must be an array/);
@@ -87,6 +102,51 @@ test("bounded unattended authorization validates recovery and deterministic deri
   assert.throws(() => validateAuthorizationManifest(unattendedAuthorizations({ execution: { mode: "unknown", maxAttemptsPerOperation: 2, stopConditions: [] } })), /execution mode/);
   assert.throws(() => validateAuthorizationManifest(unattendedAuthorizations({ operations: [{ ...unattendedAuthorizations().operations[1], dependsOn: ["AUTH-MISSING"] }] })), /unknown operation/);
   assert.throws(() => validateAuthorizationManifest(unattendedAuthorizations({ operations: [{ ...unattendedAuthorizations().operations[2], derivation: { inputs: [], procedure: "hash", validation: "check" } }] })), /derivation.inputs/);
+});
+
+test("routine task authorization binds a concrete request without a second confirmation", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-routine-authorization-"));
+  const statusDir = join(root, "status");
+  const planPath = join(statusDir, "handoffs", "plan.json");
+  const scopePath = join(root, "scope.txt");
+  const authorizationPath = join(statusDir, "handoffs", "authorizations.json");
+  try {
+    initialize({ "status-dir": statusDir, run: "run-one", repo: "fixture", base: "abc", branch: "build/run-one", environment: {} });
+    writeFileSync(planPath, `${JSON.stringify(manifest(), null, 2)}\n`);
+    writeFileSync(scopePath, "criterion-1\n");
+    writeFileSync(authorizationPath, `${JSON.stringify(routineAuthorizations(), null, 2)}\n`);
+    recordManifest({ "status-dir": statusDir, file: planPath });
+
+    const bound = authorizeRoutine({ "status-dir": statusDir, plan: planPath, scope: scopePath, authorizations: authorizationPath, event: "task-request" });
+    assert.equal(bound.authorizationType, "task");
+    assert.deepEqual(checkApproval({ "status-dir": statusDir, plan: planPath, scope: scopePath, authorizations: authorizationPath, operations: "AUTH-001" }).operations, ["AUTH-001"]);
+    assert.throws(() => authorizeRoutine({ "status-dir": statusDir, plan: planPath, scope: scopePath, authorizations: authorizationPath, event: "task-request" }), /already bound/);
+
+    writeFileSync(authorizationPath, `${JSON.stringify(unattendedAuthorizations(), null, 2)}\n`);
+    assert.throws(() => authorizeRoutine({ "status-dir": statusDir, plan: planPath, scope: scopePath, authorizations: authorizationPath, event: "task-request" }), /explicit approval/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("existing runs reuse their recorded worktree after the configured root changes", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-existing-worktree-"));
+  const statusDir = join(root, "status");
+  const legacyRoot = join(root, "legacy-root");
+  const configuredRoot = join(root, "configured-root");
+  mkdirSync(legacyRoot);
+  mkdirSync(configuredRoot);
+  const options = { "status-dir": statusDir, run: "run-one", repo: "fixture", base: "abc", branch: "build/run-one" };
+  try {
+    initialize({ ...options, environment: { BASICS_TEMP_ROOT: legacyRoot } });
+    const reused = initialize({ ...options, environment: { BASICS_TEMP_ROOT: configuredRoot } });
+    const ledger = JSON.parse(readFileSync(join(statusDir, "handoffs", "run-ledger.json"), "utf8"));
+
+    assert.equal(reused.reused, true);
+    assert.equal(ledger.worktree.root, legacyRoot);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("compact receipts omit detailed evidence and cap artifact references", () => {

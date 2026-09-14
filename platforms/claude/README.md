@@ -45,8 +45,9 @@ Record the telemetry gap and continue with the workflow's file-backed
 manifests and receipts; hooks never grant approval.
 
 **State directory:** set `BASICS_RUNS_DIR` when durable status artifacts need
-a host-selected location. `BASICS_WORKTREE_ROOT` controls only disposable
-worktrees and build artifacts.
+a host-selected location. `BASICS_TEMP_ROOT` controls project-contained
+disposable artifacts; Build accepts `BASICS_WORKTREE_ROOT` only as its
+deprecated fallback.
 
 The generated tree excludes the unavailable lifecycle implementation while
 retaining every canonical skill directory and all compatible resources. The

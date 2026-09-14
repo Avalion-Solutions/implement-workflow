@@ -9,6 +9,8 @@ Use this skill when a committed Basics plugin change must be installed or
 reinstalled for Codex. It covers the Codex adapter only; Claude Code uses its
 own plugin installation flow.
 
+Use [references/update-checklist.md](references/update-checklist.md) to verify source, version, installation, and hook state before reporting completion.
+
 The standard marketplace is the repository's GitHub `main` branch:
 
 ```bash

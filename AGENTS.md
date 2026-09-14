@@ -40,10 +40,10 @@ Treat an unmaterialized, stale, missing, or mismatched hook destination as a fai
 
 ## Skill validation targets
 
-- Run quick validation and the bundled non-strict checker against canonical `.agents/skills/<skill>` sources.
+- Run the bundled Node quick validator and non-strict checker against canonical `.agents/skills/<skill>` sources.
 - Run the bundled checker with `--strict` against generated `plugins/basics/skills/<skill>` directories, where Codex `agents/openai.yaml` metadata has been injected.
-- Invoke `.agents/skills/skill-check/scripts/check_skill.py` or `plugins/basics/skills/skill-check/scripts/check_skill.py`; never invoke a different global checker copy.
-- Run `python3 .agents/skills/skill-check/scripts/check_skill.test.py` whenever checker behavior changes.
+- Invoke `.agents/skills/skill-check/scripts/check-skill.mjs` or `plugins/basics/skills/skill-check/scripts/check-skill.mjs`; never invoke a different global checker copy.
+- Run the Node skill-check regression test whenever checker behavior changes.
 
 ## Release checks
 

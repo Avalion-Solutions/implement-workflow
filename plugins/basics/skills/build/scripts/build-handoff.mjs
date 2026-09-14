@@ -13,6 +13,7 @@ const SCOPE_DISPOSITIONS = new Set(["in-scope", "in-scope-nonblocking", "out-of-
 const REPAIR_RESULTS = new Set(["fixed", "not-reproducible", "needs-context", "blocked"]);
 const AUTHORIZATION_CATEGORIES = ["filesystem", "git", "dependencies", "external-systems", "identity-access", "cost-lifecycle", "recovery"];
 const AUTHORIZATION_EXECUTION_MODES = new Set(["interactive", "bounded-unattended"]);
+const AUTHORIZATION_AUTHORITIES = new Set(["task", "explicit"]);
 const TIME_BUDGET = { targetMinutes: 30, hardMinutes: 45 };
 const REQUIRED_ARRAYS = ["decisions", "criteria", "inputs", "outputs", "checks", "findings", "blockers", "artifacts", "next"];
 const STAGE = /^(?:brainstorm|seed-tests|blue|red-[1-9]\d*|fixer-[1-9]\d*|integration)$/;
@@ -41,6 +42,7 @@ if (directExecution) {
       case "validate": print(validateManifest(readJson(required(options, "file")), options.kind)); break;
       case "record": print(recordManifest(options)); break;
       case "approve": print(approve(options)); break;
+      case "authorize-routine": print(authorizeRoutine(options)); break;
       case "check-approval": print(checkApproval(options)); break;
       case "validate-authorizations": print(validateAuthorizationManifest(readJson(required(options, "file")), options.run)); break;
       case "budget": print(checkBudget(options)); break;
@@ -94,16 +96,16 @@ function initialize(options) {
     base: required(options, "base"),
     branch: required(options, "branch"),
   };
-  const worktree = resolveBuildWorktree({ runId: required(options, "run"), environment: options.environment || process.env });
   if (existsSync(paths.ledger)) {
     const ledger = readLedger(paths.ledger);
     if (ledger.runId !== required(options, "run")) throw new Error(`Run ledger already belongs to ${ledger.runId}`);
     for (const field of ["repo", "base", "branch"]) {
       if (ledger.source[field] !== source[field]) throw new Error(`Run ledger ${field} does not match: ${ledger.source[field]}`);
     }
-    requireRecordedWorktree(ledger, worktree.root);
+    requireRecordedWorktree(ledger);
     return { ledger: paths.ledger, reused: true };
   }
+  const worktree = resolveBuildWorktree({ runId: required(options, "run"), environment: options.environment || process.env });
   const now = timestamp();
   writeAtomic(paths.ledger, {
     schemaVersion: 1,
@@ -227,6 +229,8 @@ function validateAuthorizationManifest(value, expectedRunId = "") {
     if (!/^AUTH-[A-Z0-9-]+$/.test(operation.id) || ids.has(operation.id)) throw new Error(`Authorization operations[${index}].id must be unique and start with AUTH-`);
     ids.add(operation.id);
     if (!AUTHORIZATION_CATEGORIES.includes(operation.category)) throw new Error(`Invalid authorization category: ${operation.category}`);
+    const authority = operation.authority ?? "explicit";
+    if (!AUTHORIZATION_AUTHORITIES.has(authority)) throw new Error(`Invalid authorization authority: ${authority}`);
     if (!Array.isArray(operation.targets) || !operation.targets.length || operation.targets.some((target) => typeof target !== "string" || !target.trim())) throw new Error(`Authorization operations[${index}].targets must contain exact targets`);
     if (operation.trigger !== undefined && (typeof operation.trigger !== "string" || !operation.trigger.trim())) throw new Error(`Authorization operations[${index}].trigger must be a non-empty string`);
     if (operation.maxAttempts !== undefined && (!Number.isInteger(operation.maxAttempts) || operation.maxAttempts < 1 || operation.maxAttempts > (execution.maxAttemptsPerOperation || 5))) {
@@ -337,6 +341,14 @@ function compactReceipt(manifest, manifestPath, now) {
 }
 
 function approve(options) {
+  return bindAuthorization(options, "explicit");
+}
+
+function authorizeRoutine(options) {
+  return bindAuthorization(options, "task");
+}
+
+function bindAuthorization(options, authorizationType) {
   const paths = pathsFor(options);
   const plan = resolve(required(options, "plan"));
   const scope = resolve(required(options, "scope"));
@@ -345,7 +357,14 @@ function approve(options) {
   validateManifest(planManifest, "plan");
   const authorizationManifest = readJson(authorizations);
   const authorizationValidation = validateAuthorizationManifest(authorizationManifest, planManifest.runId);
+  const explicitOperations = authorizationManifest.operations
+    .filter((operation) => (operation.authority ?? "explicit") === "explicit")
+    .map(({ id }) => id);
+  if (authorizationType === "task" && explicitOperations.length) {
+    throw new Error(`Routine task authorization cannot bind operations requiring explicit approval: ${explicitOperations.join(", ")}`);
+  }
   const ledger = readLedger(paths.ledger);
+  if (ledger.approval) throw new Error("This run is already bound to an authorization record");
   if (planManifest.runId !== ledger.runId) throw new Error("Plan runId does not match the run ledger");
   const brainstorm = ledger.stages.brainstorm;
   if (!brainstorm || brainstorm.status !== "completed") throw new Error("The Brainstorm stage is not recorded as completed");
@@ -358,6 +377,7 @@ function approve(options) {
     authorizations,
     authorizationsSha256: hashFile(authorizations),
     executionMode: authorizationValidation.executionMode || "interactive",
+    authorizationType,
     event: required(options, "event"),
     approvedAt: timestamp(),
   };
@@ -381,7 +401,7 @@ function checkApproval(options) {
   const requested = String(options.operations || options.operation || "").split(",").map((id) => id.trim()).filter(Boolean);
   const approvedIds = new Set(manifest.operations.map(({ id }) => id));
   for (const id of requested) if (!approvedIds.has(id)) throw new Error(`Authorization operation ${id} is not approved`);
-  return { approved: true, event: ledger.approval.event, approvedAt: ledger.approval.approvedAt, executionMode: ledger.approval.executionMode || "interactive", operations: requested };
+  return { approved: true, event: ledger.approval.event, approvedAt: ledger.approval.approvedAt, executionMode: ledger.approval.executionMode || "interactive", authorizationType: ledger.approval.authorizationType || "explicit", operations: requested };
 }
 
 function checkBudget(options) {
@@ -513,8 +533,8 @@ function writeAtomic(path, value) {
 }
 function print(value) { process.stdout.write(`${JSON.stringify(value)}\n`); }
 function usage(code) {
-  process.stdout.write("Usage: build-handoff.mjs <init|validate|validate-authorizations|record|approve|check-approval|budget|time-budget|report> [options]\n");
+  process.stdout.write("Usage: build-handoff.mjs <init|validate|validate-authorizations|record|approve|authorize-routine|check-approval|budget|time-budget|report> [options]\n");
   process.exitCode = code;
 }
 
-export { AUTHORIZATION_CATEGORIES, AUTHORIZATION_EXECUTION_MODES, BUDGETS, TIME_BUDGET, approve, checkApproval, checkBudget, checkTimeBudget, compactReceipt, initialize, recordManifest, renderReport, validateAuthorizationManifest, validateManifest };
+export { AUTHORIZATION_AUTHORITIES, AUTHORIZATION_CATEGORIES, AUTHORIZATION_EXECUTION_MODES, BUDGETS, TIME_BUDGET, approve, authorizeRoutine, checkApproval, checkBudget, checkTimeBudget, compactReceipt, initialize, recordManifest, renderReport, validateAuthorizationManifest, validateManifest };

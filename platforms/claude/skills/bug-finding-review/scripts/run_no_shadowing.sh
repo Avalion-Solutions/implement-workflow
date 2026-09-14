@@ -3,14 +3,9 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-python_bin=''
-if command -v python3 >/dev/null 2>&1; then
-    python_bin='python3'
-elif command -v python >/dev/null 2>&1; then
-    python_bin='python'
-else
-    echo "no-shadow: python3/python not found" >&2
+if ! command -v node >/dev/null 2>&1; then
+    echo "no-shadow: node is required" >&2
     exit 127
 fi
 
-"$python_bin" "$script_dir/no_shadowing.py" "$@"
+node "$script_dir/no-shadowing.mjs" "$@"

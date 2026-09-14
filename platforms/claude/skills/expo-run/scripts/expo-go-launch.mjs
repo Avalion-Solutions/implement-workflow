@@ -2,12 +2,13 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const LOCAL_ENDPOINT = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s"'`<>]*)?/gi;
+const HTTPS_ENDPOINT = /\bhttps:\/\/[^\s"'`<>]+/gi;
 const EXPO_URL = /\bexp:\/\/[^\s"'`<>]+/i;
 
 export function expoArguments(mode) {
@@ -24,6 +25,18 @@ export function extractLocalEndpoints(output) {
   return [...new Set(output.match(LOCAL_ENDPOINT) ?? [])];
 }
 
+export function extractBrowserUrl(output) {
+  for (const endpoint of output.match(HTTPS_ENDPOINT) ?? []) {
+    try {
+      const hostname = new URL(endpoint).hostname.toLowerCase();
+      if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1") return endpoint;
+    } catch {
+      // Ignore malformed output fragments until Expo prints a complete URL.
+    }
+  }
+  return null;
+}
+
 function projectSlug(projectRoot) {
   const slug = basename(resolve(projectRoot))
     .toLowerCase()
@@ -32,28 +45,39 @@ function projectSlug(projectRoot) {
   return slug || "expo-app";
 }
 
-export function qrArtifactPath({ projectRoot, temporaryRoot = tmpdir() }) {
-  return join(temporaryRoot, `${projectSlug(projectRoot)}-expo-go-qr.txt`);
+function resolveTemporaryRoot(environment = process.env) {
+  const configured = typeof environment.BASICS_TEMP_ROOT === "string" ? environment.BASICS_TEMP_ROOT.trim() : "";
+  const root = configured || tmpdir();
+  if (!isAbsolute(root)) throw new Error(`Temporary root must be absolute: ${root}`);
+  return resolve(root);
 }
 
-export async function writeQrArtifact({ projectRoot, temporaryRoot = tmpdir(), url, render }) {
+export function qrArtifactPath({ projectRoot, temporaryRoot }) {
+  if (temporaryRoot) return join(temporaryRoot, `${projectSlug(projectRoot)}-expo-go-qr.txt`);
+  return join(resolveTemporaryRoot(), projectSlug(projectRoot), "expo", "expo-go-qr.txt");
+}
+
+export async function writeQrArtifact({ projectRoot, temporaryRoot, url, render }) {
   if (!/^exp:\/\//i.test(url ?? "")) throw new Error("A published exp:// URL is required before creating a QR artifact.");
   const qr = await render(url);
   const artifact = qrArtifactPath({ projectRoot, temporaryRoot });
   const contents = `${qr.trimEnd()}\n\nExpo Go URL: ${url}\n`;
-  await mkdir(temporaryRoot, { recursive: true });
+  await mkdir(dirname(artifact), { recursive: true });
   await writeFile(artifact, contents, "utf8");
   return artifact;
 }
 
-export function formatReadyOutput({ url, qrPath, localEndpoints = [] }) {
-  const lines = [
-    `Mobile tunnel: ${url}`,
-    `QR text file: ${qrPath}`,
-    "Read the QR text file and reproduce it in your response, even if terminal output is truncated.",
-  ];
-  for (const endpoint of localEndpoints) lines.push(`Observed local endpoint: ${endpoint}`);
-  return `${lines.join("\n")}\n`;
+export function formatReadyOutput({ browserUrl, url, qr }) {
+  return [
+    "---",
+    `Browser: ${browserUrl}`,
+    `Expo Go: ${url}`,
+    "",
+    "[TUI QR]",
+    qr.trimEnd(),
+    "---",
+    "",
+  ].join("\n");
 }
 
 function projectRequire(projectRoot) {
@@ -141,7 +165,7 @@ function streamChildOutput(child, onOutput, stdout, stderr) {
 export async function runExpo({
   mode,
   projectRoot = process.cwd(),
-  temporaryRoot = tmpdir(),
+  temporaryRoot,
   timeoutMs = timeoutFromEnvironment(process.env.EXPO_RUN_TIMEOUT_MS),
   spawnImpl = spawn,
   stdout = process.stdout,
@@ -159,7 +183,9 @@ export async function runExpo({
   });
 
   let publishedUrl = null;
-  let publishedPromise = Promise.resolve();
+  let browserUrl = null;
+  let readyPromise = Promise.resolve();
+  let ready = false;
   let timeout;
   let timedOut = false;
   let requestedSignal = null;
@@ -176,16 +202,15 @@ export async function runExpo({
   signalSource.on("SIGINT", onSigint);
   signalSource.on("SIGTERM", onSigterm);
 
-  const publish = (url) => {
-    if (publishedUrl || mode !== "tunnel") return;
-    publishedUrl = url;
+  const publish = () => {
+    if (mode !== "tunnel" || !publishedUrl || !browserUrl || ready) return;
+    ready = true;
     clearTimeout(timeout);
-    publishedPromise = (async () => {
+    readyPromise = (async () => {
       const renderQr = render(root);
-      const qr = await renderQr(url);
-      const artifact = await writeQrArtifact({ projectRoot: root, temporaryRoot, url, render: async () => qr });
-      stdout.write(`${qr.trimEnd()}\n\nExpo Go URL: ${url}\n`);
-      stdout.write(formatReadyOutput({ url, qrPath: artifact, localEndpoints: [...localEndpoints] }));
+      const qr = await renderQr(publishedUrl);
+      await writeQrArtifact({ projectRoot: root, temporaryRoot, url: publishedUrl, render: async () => qr });
+      stdout.write(formatReadyOutput({ browserUrl, url: publishedUrl, qr }));
     })().catch((error) => {
       stderr.write(`expo-run QR setup failed: ${error.message}\n`);
       stopOwnedChild("SIGTERM");
@@ -195,16 +220,17 @@ export async function runExpo({
 
   const flushOutput = streamChildOutput(child, (output) => {
     for (const endpoint of extractLocalEndpoints(output)) localEndpoints.add(endpoint);
-    const url = extractExpoUrl(output);
-    if (url) publish(url);
+    if (!publishedUrl) publishedUrl = extractExpoUrl(output);
+    if (!browserUrl) browserUrl = extractBrowserUrl(output);
+    publish();
   }, stdout, stderr);
 
   if (mode === "tunnel") {
     timeout = setTimeout(() => {
-      if (publishedUrl) return;
+      if (publishedUrl && browserUrl) return;
       timedOut = true;
       stderr.write(
-        `Expo did not publish an exp:// URL within ${timeoutMs}ms. Check the project-local @expo/ngrok dependency and tunnel connectivity; no QR was created.\n`,
+        `Expo did not publish both a public https:// browser URL and an exp:// URL within ${timeoutMs}ms. Check the project-local @expo/ngrok dependency and tunnel connectivity; no QR was created.\n`,
       );
       stopOwnedChild("SIGTERM");
     }, timeoutMs);
@@ -222,24 +248,24 @@ export async function runExpo({
       signalSource.removeListener("SIGINT", onSigint);
       signalSource.removeListener("SIGTERM", onSigterm);
       try {
-        await publishedPromise;
+        await readyPromise;
       } catch (error) {
         rejectRun(error);
         return;
       }
       if (timedOut) {
-        rejectRun(new Error(`Expo did not publish an exp:// URL within ${timeoutMs}ms.`));
+        rejectRun(new Error(`Expo did not publish both a public https:// browser URL and an exp:// URL within ${timeoutMs}ms.`));
         return;
       }
-      if (mode === "tunnel" && !publishedUrl && !requestedSignal) {
-        rejectRun(new Error("Expo exited before publishing an exp:// URL; no QR artifact was created."));
+      if (mode === "tunnel" && (!publishedUrl || !browserUrl) && !requestedSignal) {
+        rejectRun(new Error("Expo exited before publishing both a public https:// browser URL and an exp:// URL; no QR artifact was created."));
         return;
       }
       if (code !== 0 && !requestedSignal) {
         rejectRun(new Error(`Expo exited with code ${code ?? "unknown"}${signal ? ` (${signal})` : ""}.`));
         return;
       }
-      resolveRun({ code, signal, url: publishedUrl, localEndpoints: [...localEndpoints] });
+      resolveRun({ code, signal, url: publishedUrl, browserUrl, localEndpoints: [...localEndpoints] });
     });
   });
 }

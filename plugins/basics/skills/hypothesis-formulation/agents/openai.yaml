@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hypothesis Formulation"
+  short_description: "Form ranked falsifiable debug hypotheses"
+  default_prompt: "Use $basics:hypothesis-formulation to turn these symptoms into ranked, falsifiable debugging hypotheses."
