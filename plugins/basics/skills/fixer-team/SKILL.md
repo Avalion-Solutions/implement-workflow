@@ -78,6 +78,6 @@ Write one append-only `<status-dir>/handoffs/repairs/<finding-id>-<iteration>.js
 
 ## Completion
 
-Run the complete relevant suite. Under Build, write `<status-dir>/handoffs/fixer-1.json` with per-finding results, receipt paths, commits, tests, scoped Judge decision, blockers, fallbacks, and delivery SHA; validate and record it with `build-handoff.mjs`. Return only its compact receipt and artifact links. Outside Build, return equivalent concise Markdown.
+Run the complete relevant suite. Under Build, write a staged `fixer-1` manifest with per-finding results, receipt paths, commits, tests, scoped Judge decision, blockers, fallbacks, and delivery SHA; the Build orchestrator must close it with `build-handoff.mjs close-stage`. Return only its compact receipt and artifact links. Outside Build, return equivalent concise Markdown.
 
 Hand off the integration branch. Remove only team-created temporary worktrees after their commits are merged or intentionally retained; preserve blocked/unmerged artifacts.

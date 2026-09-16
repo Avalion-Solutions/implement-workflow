@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { approve, authorizeRoutine, checkApproval, checkBudget, checkTimeBudget, compactReceipt, initialize, recordManifest, renderReport, validateAuthorizationManifest, validateManifest } from "./build-handoff.mjs";
+import { approve, authorizeRoutine, checkApproval, checkBudget, checkTimeBudget, closeStage, compactReceipt, initialize, reconcile, recordManifest, renderReport, telemetryTeam, validateAuthorizationManifest, validateManifest } from "./build-handoff.mjs";
 
 function manifest(overrides = {}) {
   return {
@@ -158,6 +159,40 @@ test("compact receipts omit detailed evidence and cap artifact references", () =
   assert.deepEqual(receipt.checks, { passed: 2 });
   assert.equal(receipt.artifacts.length, 8);
   assert.doesNotMatch(JSON.stringify(receipt), /large raw output|not copied/);
+});
+
+test("close-stage promotes, records, and idempotently reconciles terminal telemetry", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-close-stage-"));
+  const statusDir = join(root, "status");
+  try {
+    initialize({ "status-dir": statusDir, run: "run-one", repo: "fixture", base: "abc", branch: "build/run-one", environment: {} });
+    const statusScript = join(import.meta.dirname, "build-status.mjs");
+    const initialized = spawnSync(process.execPath, [statusScript, "init", "--state-dir", statusDir, "--run", "run-one", "--repo", "fixture", "--base", "abc", "--branch", "build/run-one"], { encoding: "utf8" });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    const staged = join(root, "staged-plan.json");
+    writeFileSync(staged, `${JSON.stringify(manifest(), null, 2)}\n`);
+    assert.equal(closeStage({ "status-dir": statusDir, file: staged }).pending, 0);
+    const canonical = join(statusDir, "handoffs", "plan.json");
+    const ledger = JSON.parse(readFileSync(join(statusDir, "handoffs", "run-ledger.json"), "utf8"));
+    const status = JSON.parse(readFileSync(join(statusDir, "status.json"), "utf8"));
+    assert.equal(ledger.stages.brainstorm.manifest, canonical);
+    assert.equal(ledger.stages.brainstorm.telemetry.state, "synchronized");
+    assert.equal(status.teams.brainstorm.status, "completed");
+    assert.equal(status.teams.brainstorm.progress, 100);
+    const count = readFileSync(join(statusDir, "events.ndjson"), "utf8").split("\n").filter((line) => line.includes(ledger.stages.brainstorm.telemetry.id)).length;
+    closeStage({ "status-dir": statusDir, file: staged });
+    reconcile({ "status-dir": statusDir });
+    const repeated = readFileSync(join(statusDir, "events.ndjson"), "utf8").split("\n").filter((line) => line.includes(ledger.stages.brainstorm.telemetry.id)).length;
+    assert.equal(count, 1);
+    assert.equal(repeated, 1);
+    assert.equal(telemetryTeam("red-2"), "red");
+    assert.equal(telemetryTeam("fixer-3"), "fixer");
+    assert.throws(() => closeStage({ "status-dir": statusDir, file: staged.replace("staged-plan", "missing") }), /ENOENT/);
+    writeFileSync(staged, `${JSON.stringify(manifest({ status: "blocked" }), null, 2)}\n`);
+    assert.throws(() => closeStage({ "status-dir": statusDir, file: staged }), /requires completed or not-required/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("ledger enforces one scoped Red/Fixer round, approval, budgets, and readiness", () => {

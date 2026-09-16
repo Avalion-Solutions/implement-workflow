@@ -10,6 +10,8 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const LOCAL_ENDPOINT = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s"'`<>]*)?/gi;
 const HTTPS_ENDPOINT = /\bhttps:\/\/[^\s"'`<>]+/gi;
 const EXPO_URL = /\bexp:\/\/[^\s"'`<>]+/i;
+const METRO_MANIFEST_URL = "http://127.0.0.1:8081/";
+const MANIFEST_HEADERS = { Accept: "application/expo+json,application/json", "Expo-Platform": "ios" };
 
 export function expoArguments(mode) {
   if (mode === "tunnel") return ["start", "--go", "--tunnel", "--clear"];
@@ -67,17 +69,32 @@ export async function writeQrArtifact({ projectRoot, temporaryRoot, url, render 
   return artifact;
 }
 
-export function formatReadyOutput({ browserUrl, url, qr }) {
+export function formatReadyOutput({ browserUrl, url, qr, artifact }) {
   return [
     "---",
     `Browser: ${browserUrl}`,
     `Expo Go: ${url}`,
+    `QR report: ${artifact}`,
     "",
     "[TUI QR]",
     qr.trimEnd(),
     "---",
     "",
   ].join("\n");
+}
+
+export async function readExistingExpoManifest({ fetchImpl = fetch, manifestUrl = METRO_MANIFEST_URL, timeoutMs = 1_000 } = {}) {
+  try {
+    const response = await fetchImpl(manifestUrl, {
+      headers: MANIFEST_HEADERS,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response?.ok) return null;
+    const manifest = await response.json();
+    return manifest && typeof manifest === "object" ? { manifestUrl, manifest } : null;
+  } catch {
+    return null;
+  }
 }
 
 function projectRequire(projectRoot) {
@@ -172,8 +189,15 @@ export async function runExpo({
   stderr = process.stderr,
   render = terminalQrRenderer,
   signalSource = process,
+  fetchImpl = fetch,
+  manifestUrl = METRO_MANIFEST_URL,
 } = {}) {
   const root = resolve(projectRoot);
+  const existing = await readExistingExpoManifest({ fetchImpl, manifestUrl });
+  if (existing) {
+    stdout.write(`Expo is already running at ${existing.manifestUrl}; not starting a duplicate.\n`);
+    return { alreadyRunning: true, manifestUrl: existing.manifestUrl, manifest: existing.manifest };
+  }
   const args = expoArguments(mode);
   if (mode === "tunnel") assertTunnelDependencies(root);
   const cli = resolveExpoCli(root);
@@ -209,8 +233,8 @@ export async function runExpo({
     readyPromise = (async () => {
       const renderQr = render(root);
       const qr = await renderQr(publishedUrl);
-      await writeQrArtifact({ projectRoot: root, temporaryRoot, url: publishedUrl, render: async () => qr });
-      stdout.write(formatReadyOutput({ browserUrl, url: publishedUrl, qr }));
+      const artifact = await writeQrArtifact({ projectRoot: root, temporaryRoot, url: publishedUrl, render: async () => qr });
+      stdout.write(formatReadyOutput({ browserUrl, url: publishedUrl, qr, artifact }));
     })().catch((error) => {
       stderr.write(`expo-run QR setup failed: ${error.message}\n`);
       stopOwnedChild("SIGTERM");

@@ -87,12 +87,13 @@ Use the deterministic helper:
 
 ```bash
 node <skill>/scripts/build-handoff.mjs validate --file <manifest>
-node <skill>/scripts/build-handoff.mjs record --status-dir <status-dir> --file <manifest>
+node <skill>/scripts/build-handoff.mjs close-stage --status-dir <status-dir> --file <staged-manifest>
+node <skill>/scripts/build-handoff.mjs reconcile --status-dir <status-dir>
 node <skill>/scripts/build-handoff.mjs budget --status-dir <status-dir> --kind manifest --file <manifest>
 node <skill>/scripts/build-handoff.mjs time-budget --status-dir <status-dir>
 ```
 
-`record` updates `run-ledger.json` atomically and prints the compact receipt to return upstream. The ledger is the parent's stage-close memory; raw logs and earlier manifests are not conversational payload.
+`close-stage` is the required terminal-stage interface. It accepts only `completed` and `not-required`, validates the dependency chain, promotes the staged manifest to its canonical path, records a pending ledger receipt, and reconciles dashboard telemetry. Reconciliation is restart-safe and idempotent by stage and manifest SHA-256. The ledger and canonical manifest remain authoritative; a telemetry failure stays visible and non-release-blocking. Legacy `record` remains available only for offline ledger-only compatibility.
 
 ## Authorization provenance
 
@@ -179,7 +180,7 @@ Run `build-handoff.mjs budget`. On warning, move detail to an artifact/log and s
 
 ## Status telemetry
 
-Use `build-status.mjs` as the only dashboard normalizer. Team, agent, task, and run commands each emit their own event; do not add duplicate generic before/after events. Use generic `event` only for approvals, validations, merges, and telemetry gaps. Register intended agents as queued before launch and mark active only after the host confirms start. Mark every invoked role terminal; use `not-required` for intentionally skipped roles. Telemetry failure is disclosed and never changes source or release safety.
+Use `build-status.mjs` as the only dashboard normalizer. Terminal team transitions come only from a validated `close-stage` receipt; hooks may update agents and selected tasks but never complete a team, approve work, or accept an unrecorded manifest. Do not add duplicate generic before/after events. Use generic `event` only for approvals, validations, merges, and telemetry gaps. Register intended agents as queued before launch and mark active only after the host confirms start. Mark every invoked role terminal; use `not-required` for intentionally skipped roles. Telemetry failure is disclosed and never changes source or release safety.
 
 ## Required suite validation
 
