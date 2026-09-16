@@ -1,28 +1,21 @@
 ---
 name: expo-run
-description: Configure, launch, observe, or stop an Expo project with local web and Expo Go tunnel defaults, reading repository-specific Expo instructions when present.
+description: Configure, launch, observe, or stop an Expo project with a verified browser URL and Expo Go QR rendered directly in the terminal, or an explicit local Expo Web mode.
 ---
 
 # Expo Run
 
-Use this skill as the portable Expo launch template. First identify the actual
-project root containing `package.json`; do not assume the repository root is
-runnable.
+Use this skill for an Expo application's launch workflow. It is portable: first
+identify the actual project root containing `package.json`; do not assume the
+repository root is runnable.
 
 ## Repository instructions
 
 Before configuring or launching, read `<repository-root>/.agents/expo-run.md`
-when it exists. This is the standard location for repository-specific Expo
-requirements such as an app subdirectory, staging policy, companion services,
-environment variables, health endpoint, and safe stop behavior. Follow it in
-addition to this skill. It may select an existing repository launcher; do not
-overwrite that launcher with `--write` unless the instructions explicitly say
-it is safe.
-
-When a repository has recurring Expo requirements but no such file, create a
-concise `.agents/expo-run.md` only when the user asks to record or configure
-that project behavior. Keep it limited to facts the generic template cannot
-discover.
+when it exists. Identify the actual project root containing `package.json` and
+follow the repository launcher, staging policy, environment requirements, and
+safe-stop behavior. Do not overwrite a repository launcher with `--write` when
+the repository instructions select a different command.
 
 ## Preflight
 
@@ -43,9 +36,7 @@ pnpm add -D @expo/ngrok qrcode-terminal
 
 Do not use a global Expo CLI, a global QR tool, PNG generation, `qrencode`, or
 a browser for the tunnel journey. Do not infer an Expo Go URL from a project
-name, host, or fixed port. Before launching, the launcher requests the Expo
-manifest at its configured local endpoint; a valid response means Metro is
-already running, so report it and do not start a duplicate.
+name, host, or fixed port.
 
 ## Configure package scripts
 
@@ -57,14 +48,15 @@ After approval to change this Expo project's `package.json`, copy
 node <expo-run-skill>/scripts/configure-expo-run.mjs --write .
 ```
 
-This maps the target project's default mobile and local development paths while
-preserving all unrelated package fields and scripts:
+This maps the target project's scripts exactly as follows while preserving all
+unrelated package fields and scripts:
 
 ```json
 {
   "scripts": {
     "start": "node scripts/expo-go-launch.mjs tunnel",
-    "start:local": "node scripts/expo-go-launch.mjs local"
+    "start:local": "node scripts/expo-go-launch.mjs local",
+    "start:status": "node scripts/expo-go-launch.mjs status"
   }
 }
 ```
@@ -87,31 +79,28 @@ The foreground launcher invokes the project's Expo CLI with exactly:
 start --go --tunnel --clear
 ```
 
-It waits until Expo actually prints both a public `https://...` browser URL and
-an `exp://...` Expo Go URL. Only then does it render a terminal QR for that
-exact Expo Go URL and save the same QR text and URL in a project-specific
-`.txt` file under `BASICS_TEMP_ROOT/<project>/expo/` (or its platform fallback). It reports an actionable
-timeout or missing-project-dependency error instead of fabricating either URL
-or a QR.
+It waits until Expo actually publishes both a working public `https://...`
+browser URL and an `exp://...` Expo Go URL. Only then does it render a
+terminal QR for that exact Expo Go URL. The launcher prints the complete
+user-facing report directly to stdout; it must not create a QR/report file,
+print a report path, or require the agent to reconstruct the QR.
 
-After both endpoints are confirmed, read the generated QR text file and issue
-this final report exactly, with no leading indentation and the actual terminal
-QR replacing `<terminal-qr>`:
+After the launcher prints the report, copy that complete block verbatim into
+the final response with no summary or omission. The report is exactly:
 
 ```text
 ---
 Browser: https://xxx
-Expo Go: exp://xxx
-QR report: <BASICS_TEMP_ROOT>/<project>/expo/expo-go-qr.txt
-
 [TUI QR]
 <terminal-qr>
 ---
 ```
 
-This is required even when terminal output is truncated. Never derive one URL
-from the other, report a local-only endpoint as the browser URL, or promise a
-fixed port.
+The QR is the mobile handoff; the raw `exp://` URL is intentionally not shown.
+Never derive one URL from the other, report a local-only endpoint as the
+browser URL, or promise a fixed port. If output is truncated or the process is
+already running, run `pnpm run start:status`; it must rediscover the verified
+endpoints and print the same report directly to stdout.
 
 ## Launch local Expo Web
 
@@ -148,7 +137,7 @@ port, or terminate a process that the launcher does not own.
   ask before installing it locally; do not substitute a global tool.
 - If either the public `https://` browser URL or `exp://` Expo Go URL is absent
   before the timeout, inspect Expo output and the tunnel/network configuration.
-  There is no usable final report or QR artifact in this state.
+  There is no usable final report in this state.
 - Expo Web can fail when web dependencies are absent. Surface Expo's first
   error rather than adding packages or switching modes automatically.
 - A printed localhost or LAN URL is useful only when Expo actually printed it;
