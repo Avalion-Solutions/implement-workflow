@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { requireRecordedWorktree, resolveBuildWorktree } from "./worktree-root.mjs";
@@ -31,6 +31,9 @@ const BUDGETS = {
   receipt: { bytes: 2 * 1024 },
   output: { bytes: 2 * 1024, lines: 20 },
 };
+const CANONICAL_MANIFEST = {
+  brainstorm: "plan.json", "seed-tests": "seed.json", blue: "blue.json", integration: "integration.json",
+};
 const directExecution = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (directExecution) {
@@ -41,6 +44,9 @@ if (directExecution) {
       case "init": print(initialize(options)); break;
       case "validate": print(validateManifest(readJson(required(options, "file")), options.kind)); break;
       case "record": print(recordManifest(options)); break;
+      case "close-stage": print(closeStage(options)); break;
+      case "reconcile": print(reconcile(options)); break;
+      case "correct-stage": print(correctStage(options)); break;
       case "approve": print(approve(options)); break;
       case "authorize-routine": print(authorizeRoutine(options)); break;
       case "check-approval": print(checkApproval(options)); break;
@@ -122,7 +128,7 @@ function initialize(options) {
   return { ledger: paths.ledger, reused: false };
 }
 
-function validateManifest(value, expectedKind = "") {
+function validateManifest(value, expectedKind = "", validationOptions = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Manifest must be a JSON object");
   if (value.schemaVersion !== 1) throw new Error("Manifest schemaVersion must be 1");
   if (!KINDS.has(value.kind)) throw new Error(`Invalid manifest kind: ${value.kind}`);
@@ -144,7 +150,7 @@ function validateManifest(value, expectedKind = "") {
       if (check.result === "passed" && check.exitCode !== 0) throw new Error(`Passed checks[${index}] must have exitCode 0`);
       if ((check.result === "failed" || check.result === "expected-failure") && check.exitCode === 0) throw new Error(`${check.result} checks[${index}] must have a nonzero exitCode`);
       if (typeof check.commit !== "string" || !check.commit.trim()) throw new Error(`Manifest checks[${index}].commit must be a non-empty string`);
-      if (check.commit !== value.source.commit) throw new Error(`Manifest checks[${index}].commit does not match source.commit`);
+      if (check.commit !== value.source.commit && !validationOptions.allowHistoricalChecks) throw new Error(`Manifest checks[${index}].commit does not match source.commit`);
       const excerpt = typeof check.evidence === "string" ? check.evidence.trim() : "";
       const log = typeof check.log === "string" ? check.log.trim() : "";
       if (!excerpt && !log) throw new Error(`Manifest checks[${index}] requires evidence or a log path`);
@@ -263,7 +269,7 @@ function recordManifest(options) {
   const manifestPath = resolve(required(options, "file"));
   if (!isWithin(paths.handoffs, manifestPath)) throw new Error(`Manifest must be stored under ${paths.handoffs}`);
   const manifest = readJson(manifestPath);
-  validateManifest(manifest, options.kind || "");
+  validateManifest(manifest, options.kind || "", { allowHistoricalChecks: options._allowHistoricalChecks === true });
   const ledger = readLedger(paths.ledger);
   if (manifest.runId !== ledger.runId) throw new Error(`Manifest runId ${manifest.runId} does not match ledger ${ledger.runId}`);
   if (manifest.source.repo !== ledger.source.repo) throw new Error(`Manifest repository ${manifest.source.repo} does not match ledger ${ledger.source.repo}`);
@@ -301,6 +307,129 @@ function recordManifest(options) {
   ledger.updatedAt = now;
   writeAtomic(paths.ledger, ledger);
   return receipt;
+}
+
+function canonicalManifestPath(paths, stage) {
+  return join(paths.handoffs, CANONICAL_MANIFEST[stage] || `${stage}.json`);
+}
+
+function telemetryTeam(stage) {
+  if (/^red-\d+$/.test(stage)) return "red";
+  if (/^fixer-\d+$/.test(stage)) return "fixer";
+  return stage;
+}
+
+function validateDependencyChain(ledger, manifest) {
+  const sequence = ["brainstorm", "seed-tests", "blue"];
+  let prerequisite = null;
+  if (manifest.stage === "seed-tests") prerequisite = "brainstorm";
+  else if (manifest.stage === "blue") prerequisite = "seed-tests";
+  else if (manifest.stage.startsWith("red-")) prerequisite = "blue";
+  else if (manifest.stage.startsWith("fixer-")) prerequisite = `red-${stageNumber(manifest.stage)}`;
+  else if (manifest.stage === "integration") prerequisite = ledger.stages["fixer-1"]?.status === "completed" ? "fixer-1" : "red-1";
+  if (!prerequisite) return;
+  const receipt = ledger.stages[prerequisite];
+  if (!receipt || !["completed", "not-required"].includes(receipt.status)) throw new Error(`Prerequisite stage ${prerequisite} is not closed`);
+  if (!existsSync(receipt.manifest) || hashFile(receipt.manifest) !== receipt.sha256) throw new Error(`Prerequisite manifest ${prerequisite} differs from its ledger receipt`);
+  const expectedInput = manifest.inputs.find((input) => input && typeof input === "object" && input.commit);
+  if (manifest.stage !== "seed-tests" && expectedInput && expectedInput.commit !== receipt.commit) throw new Error(`Prerequisite commit ${expectedInput.commit} does not match recorded ${prerequisite} commit ${receipt.commit}`);
+}
+
+function closeStage(options) {
+  const paths = pathsFor(options);
+  const stagedPath = resolve(required(options, "file"));
+  const manifest = readJson(stagedPath);
+  validateManifest(manifest, options.kind || "", { allowHistoricalChecks: options._allowHistoricalChecks === true });
+  if (!["completed", "not-required"].includes(manifest.status)) throw new Error(`close-stage requires completed or not-required status, received ${manifest.status}`);
+  const ledger = readLedger(paths.ledger);
+  if (manifest.runId !== ledger.runId || manifest.source.repo !== ledger.source.repo || manifest.source.base !== ledger.source.base) throw new Error("Manifest identity does not match the run ledger");
+  validateDependencyChain(ledger, manifest);
+  const canonical = canonicalManifestPath(paths, manifest.stage);
+  mkdirSync(dirname(canonical), { recursive: true, mode: 0o700 });
+  if (stagedPath !== canonical) copyFileSync(stagedPath, canonical);
+  const sha256 = hashFile(canonical);
+  const existing = ledger.stages[manifest.stage];
+  if (existing?.sha256 === sha256 && existing?.commit === manifest.source.commit && existing?.telemetry?.id) return reconcile(options);
+  const now = timestamp();
+  const receipt = compactReceipt(manifest, canonical, now);
+  ledger.stages[manifest.stage] = stageLedgerReceipt(manifest, canonical, receipt, now, {
+    id: `${manifest.stage}:${sha256}`, team: telemetryTeam(manifest.stage), status: manifest.status,
+    state: "pending", attempts: 0, updatedAt: now,
+  });
+  ledger.updatedAt = now;
+  writeAtomic(paths.ledger, ledger);
+  return reconcile(options);
+}
+
+function stageLedgerReceipt(manifest, manifestPath, receipt, now, telemetry) {
+  return {
+    status: manifest.status, manifest: manifestPath, sha256: hashFile(manifestPath), commit: manifest.source.commit,
+    summary: receipt.summary, checks: receipt.checks, checkTotal: receipt.checkTotal, passedChecks: receipt.passedChecks,
+    expectedFailureChecks: receipt.expectedFailureChecks, justifiedNotRequiredChecks: receipt.justifiedNotRequiredChecks,
+    failedChecks: receipt.failedChecks, findings: manifest.findings.length, eligibleFindings: receipt.eligibleFindings,
+    unresolvedFindings: receipt.unresolvedFindings, deferredFindings: receipt.deferredFindings,
+    needsContextFindings: receipt.needsContextFindings, eligibleFindingIds: receipt.eligibleFindingIds,
+    fixedFindingIds: receipt.fixedFindingIds, unresolvedRepairs: receipt.unresolvedRepairs, blockers: manifest.blockers.length,
+    inputCommits: receipt.inputCommits, reviewedCandidateCommits: receipt.reviewedCandidateCommits,
+    seedCommits: receipt.seedCommits, reviewCommits: receipt.reviewCommits, artifacts: receipt.artifacts,
+    telemetry, updatedAt: now,
+  };
+}
+
+function reconcile(options) {
+  const paths = pathsFor(options);
+  const ledger = readLedger(paths.ledger);
+  const results = [];
+  for (const [stage, stageReceipt] of Object.entries(ledger.stages)) {
+    const telemetry = stageReceipt.telemetry;
+    if (!telemetry || telemetry.state === "synchronized") continue;
+    telemetry.attempts = Number(telemetry.attempts || 0) + 1;
+    telemetry.updatedAt = timestamp();
+    try {
+      const result = reconcileTeamReceipt(paths.root, { ...telemetry, stage, manifest: stageReceipt.manifest, message: stageReceipt.summary });
+      telemetry.state = "synchronized";
+      telemetry.synchronizedAt = timestamp();
+      delete telemetry.error;
+      results.push({ stage, state: telemetry.state, emitted: result.emitted });
+    } catch (error) {
+      telemetry.state = "pending";
+      telemetry.error = error.message;
+      results.push({ stage, state: "pending", error: error.message });
+    }
+  }
+  if (results.length) {
+    ledger.updatedAt = timestamp();
+    writeAtomic(paths.ledger, ledger);
+  }
+  return { reconciled: results, pending: results.filter(({ state }) => state === "pending").length };
+}
+
+function correctStage(options) {
+  const paths = pathsFor(options);
+  const expected = required(options, "expected-ledger-sha");
+  const reason = required(options, "reason");
+  const file = resolve(required(options, "file"));
+  const manifest = readJson(file);
+  validateManifest(manifest, "", { allowHistoricalChecks: true });
+  const ledger = readLedger(paths.ledger);
+  const old = ledger.stages[manifest.stage];
+  if (!old || old.sha256 !== expected) throw new Error(`Expected ledger SHA ${expected} does not match ${old?.sha256 || "missing receipt"}`);
+  if (manifest.stage === "blue") {
+    const seed = ledger.stages["seed-tests"];
+    if (!manifest.inputs.some((input) => input?.kind === "seed" && input.commit === seed?.commit)) throw new Error("Blue commit does not match the recorded Red/seed input");
+    const redPath = canonicalManifestPath(paths, "red-1");
+    const red = existsSync(redPath) ? readJson(redPath) : null;
+    if (!red?.inputs?.some((input) => input?.kind === "candidate" && input.commit === manifest.source.commit)) throw new Error("Completed Blue commit does not match the Red input");
+  }
+  const replacementSha = hashFile(file);
+  ledger.corrections ||= [];
+  ledger.corrections.push({ stage: manifest.stage, reason, correctedAt: timestamp(), previous: old, replacementSha256: replacementSha, replacementCommit: manifest.source.commit });
+  writeAtomic(paths.ledger, ledger);
+  const result = closeStage({ ...options, file, _allowHistoricalChecks: true });
+  const refreshed = readLedger(paths.ledger);
+  refreshed.corrections = ledger.corrections;
+  writeAtomic(paths.ledger, refreshed);
+  return { corrected: true, stage: manifest.stage, previousSha256: expected, replacementSha256: replacementSha, reason, reconciliation: result };
 }
 
 function compactReceipt(manifest, manifestPath, now) {
@@ -533,8 +662,8 @@ function writeAtomic(path, value) {
 }
 function print(value) { process.stdout.write(`${JSON.stringify(value)}\n`); }
 function usage(code) {
-  process.stdout.write("Usage: build-handoff.mjs <init|validate|validate-authorizations|record|approve|authorize-routine|check-approval|budget|time-budget|report> [options]\n");
+  process.stdout.write("Usage: build-handoff.mjs <init|validate|validate-authorizations|record|close-stage|reconcile|correct-stage|approve|authorize-routine|check-approval|budget|time-budget|report> [options]\n");
   process.exitCode = code;
 }
 
-export { AUTHORIZATION_AUTHORITIES, AUTHORIZATION_CATEGORIES, AUTHORIZATION_EXECUTION_MODES, BUDGETS, TIME_BUDGET, approve, authorizeRoutine, checkApproval, checkBudget, checkTimeBudget, compactReceipt, initialize, recordManifest, renderReport, validateAuthorizationManifest, validateManifest };
+export { AUTHORIZATION_AUTHORITIES, AUTHORIZATION_CATEGORIES, AUTHORIZATION_EXECUTION_MODES, BUDGETS, TIME_BUDGET, approve, authorizeRoutine, checkApproval, checkBudget, checkTimeBudget, closeStage, compactReceipt, correctStage, initialize, reconcile, recordManifest, renderReport, telemetryTeam, validateAuthorizationManifest, validateManifest };
