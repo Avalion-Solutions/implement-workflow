@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const TUNNEL_SCRIPT = "node scripts/expo-go-launch.mjs tunnel";
-export const LOCAL_SCRIPT = "node scripts/expo-go-launch.mjs local";
 export const STATUS_SCRIPT = "node scripts/expo-go-launch.mjs status";
 const REQUIRED_TUNNEL_DEPENDENCIES = ["@expo/ngrok", "qrcode-terminal"];
 
@@ -30,7 +29,6 @@ export function configurePackage(packageJson) {
     scripts: {
       ...scripts,
       start: TUNNEL_SCRIPT,
-      "start:local": LOCAL_SCRIPT,
       "start:status": STATUS_SCRIPT,
     },
   };
@@ -51,7 +49,19 @@ export async function configureProject({ projectRoot = process.cwd(), write = fa
   }
 
   const configured = configurePackage(packageJson);
-  if (write) await writeFile(packagePath, `${JSON.stringify(configured, null, 2)}\n`);
+  if (write) {
+    const launcher = join(resolve(projectRoot), "scripts", "expo-go-launch.mjs");
+    const source = await readFile(new URL("./expo-go-launch.mjs", import.meta.url), "utf8");
+    let existing;
+    try { existing = await readFile(launcher, "utf8"); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (existing !== undefined && existing !== source) {
+      throw new Error(`Existing launcher differs: ${launcher}. Adapt it to preserve repository-specific behavior.`);
+    }
+    await mkdir(dirname(launcher), { recursive: true });
+    if (existing === undefined) await writeFile(launcher, source, { flag: "wx" });
+    await writeFile(packagePath, `${JSON.stringify(configured, null, 2)}\n`);
+  }
   return { packagePath, configured, missing: inspection.missing, wrote: write };
 }
 
@@ -69,7 +79,7 @@ async function main(argv) {
   const result = await configureProject({ projectRoot: roots[0] ?? ".", write: options.has("--write") });
   const mode = result.wrote ? "Updated" : "Preview";
   process.stdout.write(`${mode} ${result.packagePath}\n`);
-  process.stdout.write(`start: ${TUNNEL_SCRIPT}\nstart:local: ${LOCAL_SCRIPT}\nstart:status: ${STATUS_SCRIPT}\n`);
+  process.stdout.write(`start: ${TUNNEL_SCRIPT}\nstart:status: ${STATUS_SCRIPT}\n`);
   if (result.missing.length) {
     process.stdout.write(
       `Missing tunnel dependencies: ${result.missing.join(", ")}. With approval, run: pnpm add -D ${result.missing.join(" ")}\n`,
