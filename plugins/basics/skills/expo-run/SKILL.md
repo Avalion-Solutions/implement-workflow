@@ -1,13 +1,28 @@
 ---
 name: expo-run
-description: Configure, launch, observe, or stop an Expo project with an Expo Go tunnel QR in the terminal or an explicit local Expo Web mode.
+description: Configure, launch, observe, or stop an Expo project with local web and Expo Go tunnel defaults, reading repository-specific Expo instructions when present.
 ---
 
 # Expo Run
 
-Use this skill for an Expo application's launch workflow. It is portable: first
-identify the actual project root containing `package.json`; do not assume the
-repository root is runnable.
+Use this skill as the portable Expo launch template. First identify the actual
+project root containing `package.json`; do not assume the repository root is
+runnable.
+
+## Repository instructions
+
+Before configuring or launching, read `<repository-root>/.agents/expo-run.md`
+when it exists. This is the standard location for repository-specific Expo
+requirements such as an app subdirectory, staging policy, companion services,
+environment variables, health endpoint, and safe stop behavior. Follow it in
+addition to this skill. It may select an existing repository launcher; do not
+overwrite that launcher with `--write` unless the instructions explicitly say
+it is safe.
+
+When a repository has recurring Expo requirements but no such file, create a
+concise `.agents/expo-run.md` only when the user asks to record or configure
+that project behavior. Keep it limited to facts the generic template cannot
+discover.
 
 ## Preflight
 
@@ -28,7 +43,9 @@ pnpm add -D @expo/ngrok qrcode-terminal
 
 Do not use a global Expo CLI, a global QR tool, PNG generation, `qrencode`, or
 a browser for the tunnel journey. Do not infer an Expo Go URL from a project
-name, host, or fixed port.
+name, host, or fixed port. Before launching, the launcher requests the Expo
+manifest at its configured local endpoint; a valid response means Metro is
+already running, so report it and do not start a duplicate.
 
 ## Configure package scripts
 
@@ -40,8 +57,8 @@ After approval to change this Expo project's `package.json`, copy
 node <expo-run-skill>/scripts/configure-expo-run.mjs --write .
 ```
 
-This maps the target project's scripts exactly as follows while preserving all
-unrelated package fields and scripts:
+This maps the target project's default mobile and local development paths while
+preserving all unrelated package fields and scripts:
 
 ```json
 {
@@ -85,6 +102,7 @@ QR replacing `<terminal-qr>`:
 ---
 Browser: https://xxx
 Expo Go: exp://xxx
+QR report: <BASICS_TEMP_ROOT>/<project>/expo/expo-go-qr.txt
 
 [TUI QR]
 <terminal-qr>
