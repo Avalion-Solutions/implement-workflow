@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { resolveTempLocation } from "../.agents/shared/temp-location.mjs";
+const testRoot = join(resolveTempLocation().root, "agent-workflows", "tests", "expo-run");
+await mkdir(testRoot, { recursive: true });
+const tmpdir = () => testRoot;
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
-  LOCAL_SCRIPT,
+  STATUS_SCRIPT,
   TUNNEL_SCRIPT,
   configurePackage,
   configureProject,
@@ -19,12 +22,16 @@ import {
   extractBrowserUrl,
   extractExpoUrl,
   formatReadyOutput,
-  qrArtifactPath,
-  readExistingExpoManifest,
-  runExpo,
-  writeQrArtifact,
+  runExpo as runExpoImpl,
+  verifyTunnelUrl,
+  renderReadyReport,
 } from "../.agents/skills/expo-run/scripts/expo-go-launch.mjs";
 
+const webResponse = () => ({ ok: true, headers: { get: () => "text/html" }, text: async () => '<html><script src="/index.bundle?platform=web"></script></html>' });
+const runExpo = (options) => runExpoImpl({ fetchImpl: async () => webResponse(), ...options });
+async function waitForReport(stdout) {
+  for (let i = 0; i < 150 && !stdout.output.includes("QR:"); i++) await new Promise(resolve => setTimeout(resolve, 10));
+}
 async function createFakeExpoProject(prefix) {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const moduleRoot = join(root, "node_modules");
@@ -53,7 +60,7 @@ function fakeExpoChild() {
   return child;
 }
 
-test("configures one-command tunnel and local launch scripts without disturbing package data", () => {
+test("configures tunnel and status without adding a local script or disturbing package data", () => {
   const source = {
     name: "sample-app",
     private: true,
@@ -65,11 +72,13 @@ test("configures one-command tunnel and local launch scripts without disturbing 
   const configured = configurePackage(source);
 
   assert.equal(configured.scripts.start, TUNNEL_SCRIPT);
-  assert.equal(configured.scripts["start:local"], LOCAL_SCRIPT);
+  assert.equal(Object.hasOwn(configured.scripts, "start:local"), false);
+  assert.equal(configured.scripts["start:status"], STATUS_SCRIPT);
   assert.equal(configured.scripts.test, "node --test");
   assert.equal(configured.dependencies.react, "19.1.0");
   assert.notEqual(configured, source);
   assert.equal(source.scripts.start, "old-command");
+  assert.equal(configurePackage({ ...source, scripts: { "start:local": "custom-local" } }).scripts["start:local"], "custom-local");
 });
 
 test("documented copied launcher runs from the target Expo project", async () => {
@@ -105,7 +114,7 @@ test("rejects non-Expo packages and reports project-local launcher dependencies"
 });
 
 test("builds exact Expo CLI arguments for tunnel and local browser modes", () => {
-  assert.deepEqual(expoArguments("tunnel"), ["start", "--go", "--tunnel", "--clear"]);
+  assert.deepEqual(expoArguments("tunnel"), ["start", "--go", "--web", "--tunnel", "--clear"]);
   assert.deepEqual(expoArguments("local"), ["start", "--web", "--localhost", "--clear"]);
   assert.throws(() => expoArguments("lan"), /mode/i);
 });
@@ -116,64 +125,43 @@ test("extracts only a published Expo URL and ignores ordinary local endpoints", 
   assert.equal(extractExpoUrl("Local: http://localhost:8081"), null);
 });
 
-test("writes a project-specific terminal QR artifact containing the exact published URL", async () => {
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-contract-"));
-  const projectRoot = join(temporaryRoot, "My Expo App");
-  const url = "exp://abc-123.exp.direct";
-  const artifact = await writeQrArtifact({
-    projectRoot,
-    temporaryRoot,
-    url,
-    render: (value) => `QR FOR ${value}\n`,
-  });
-
-  assert.equal(artifact, join(temporaryRoot, "my-expo-app-expo-go-qr.txt"));
-  assert.equal(await readFile(artifact, "utf8"), `QR FOR ${url}\n\nExpo Go URL: ${url}\n`);
-});
-
 test("ready output gives the verified browser and Expo Go endpoints followed by the terminal QR", () => {
   const output = formatReadyOutput({
     url: "exp://abc-123.exp.direct",
     browserUrl: "https://abc-123.exp.direct",
     qr: "QR FOR exp://abc-123.exp.direct",
-    artifact: "/temp/sample/expo/expo-go-qr.txt",
   });
   assert.equal(output, [
     "---",
     "Browser: https://abc-123.exp.direct",
-    "Expo Go: exp://abc-123.exp.direct",
-    "QR report: /temp/sample/expo/expo-go-qr.txt",
     "",
-    "[TUI QR]",
+    "QR:",
     "QR FOR exp://abc-123.exp.direct",
     "---",
     "",
   ].join("\n"));
 });
 
-test("reads a valid existing Expo manifest with the mobile request headers", async () => {
-  let request;
-  const existing = await readExistingExpoManifest({
-    manifestUrl: "http://127.0.0.1:8081/",
-    fetchImpl: async (url, options) => {
-      request = { url, options };
-      return { ok: true, json: async () => ({ name: "already-running" }) };
-    },
-  });
-  assert.deepEqual(existing, { manifestUrl: "http://127.0.0.1:8081/", manifest: { name: "already-running" } });
-  assert.equal(request.options.headers["Expo-Platform"], "ios");
-});
-
-test("does not start a duplicate when the Expo manifest is already reachable", async () => {
+test("renders the complete report to stdout without creating an artifact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "expo-run-report-"));
   const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
-  const result = await runExpo({
-    mode: "tunnel",
+  await renderReadyReport({
+    projectRoot: root,
+    browserUrl: "https://abc-123.exp.direct",
+    url: "exp://abc-123.exp.direct",
+    render: () => async () => "QR FOR exp://abc-123.exp.direct\n",
     stdout,
-    fetchImpl: async () => ({ ok: true, json: async () => ({ name: "running" }) }),
-    spawnImpl: () => { throw new Error("must not spawn"); },
   });
-  assert.equal(result.alreadyRunning, true);
-  assert.match(stdout.output, /not starting a duplicate/i);
+  assert.equal(stdout.output, [
+    "---",
+    "Browser: https://abc-123.exp.direct",
+    "",
+    "QR:",
+    "QR FOR exp://abc-123.exp.direct",
+    "---",
+    "",
+  ].join("\n"));
+  assert.doesNotMatch(stdout.output, /Expo Go:|QR report:/);
 });
 
 test("extracts an observed public HTTPS browser endpoint without treating localhost as browser-ready", () => {
@@ -205,9 +193,8 @@ test("configuration rejects a non-Expo project without writing it", async () => 
   assert.equal(await readFile(packagePath, "utf8"), original);
 });
 
-test("simulated Expo tunnel observes the published URL before emitting an identical QR artifact", async () => {
+test("simulated Expo tunnel observes the published URL before emitting the complete terminal report", async () => {
   const root = await mkdtemp(join(tmpdir(), "expo-run-simulated-project-"));
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-simulated-artifact-"));
   const moduleRoot = join(root, "node_modules");
   await mkdir(join(moduleRoot, "expo", "bin"), { recursive: true });
   await mkdir(join(moduleRoot, "@expo", "ngrok"), { recursive: true });
@@ -229,10 +216,11 @@ test("simulated Expo tunnel observes the published URL before emitting an identi
     child.stderr = new PassThrough();
     child.killed = false;
     child.kill = () => { child.killed = true; return true; };
-    setImmediate(() => {
-      child.stdout.write("Expo arguments: start --go --tunnel --clear\n");
-      child.stdout.write("Browser: https://simulated.exp.direct\n");
+    setImmediate(async () => {
+      child.stdout.write("Expo arguments: start --go --web --tunnel --clear\n");
+      child.stdout.write("Browser: http://simulated.exp.direct\n");
       child.stdout.write("Published: exp://simulated.exp.direct\n");
+      await waitForReport(stdout);
       child.stdout.end();
       child.stderr.end();
       child.emit("close", 0, null);
@@ -243,81 +231,72 @@ test("simulated Expo tunnel observes the published URL before emitting an identi
   const stderr = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const result = await runExpo({
     projectRoot: root,
-    temporaryRoot,
     mode: "tunnel",
-    timeoutMs: 1_000,
+    timeoutMs: 3_000,
     stdout,
     stderr,
     spawnImpl,
   });
 
   assert.equal(result.url, "exp://simulated.exp.direct");
-  assert.equal(result.browserUrl, "https://simulated.exp.direct");
+  assert.equal(result.browserUrl, "http://simulated.exp.direct/");
   assert.equal(spawned.length, 1);
-  assert.deepEqual(spawned[0].args.slice(1), ["start", "--go", "--tunnel", "--clear"]);
-  assert.match(stdout.output, /Expo arguments: start --go --tunnel --clear/);
+  assert.deepEqual(spawned[0].args.slice(1), ["start", "--go", "--web", "--tunnel", "--clear"]);
+  assert.match(stdout.output, /Expo arguments: start --go --web --tunnel --clear/);
   assert.match(stdout.output, /QR FOR exp:\/\/simulated\.exp\.direct/);
-  assert.match(stdout.output, /Browser: https:\/\/simulated\.exp\.direct/);
-  assert.match(stdout.output, /Expo Go: exp:\/\/simulated\.exp\.direct/);
-  assert.match(stdout.output, /\[TUI QR\]\nQR FOR exp:\/\/simulated\.exp\.direct/);
-  const artifact = qrArtifactPath({ projectRoot: root, temporaryRoot });
-  const artifactContents = await readFile(artifact, "utf8");
-  assert.match(artifactContents, /QR FOR exp:\/\/simulated\.exp\.direct/);
-  assert.match(artifactContents, /Expo Go URL: exp:\/\/simulated\.exp\.direct/);
+  assert.match(stdout.output, /Browser: http:\/\/simulated\.exp\.direct/);
+  assert.doesNotMatch(stdout.output, /Expo Go:|QR report:/);
+  assert.match(stdout.output, /QR:\nQR FOR exp:\/\/simulated\.exp\.direct/);
   assert.equal(stderr.output, "");
 });
 
 test("waits for both browser and Expo Go URLs split across stdout and stderr chunks", async () => {
   const root = await createFakeExpoProject("expo-run-split-streams-");
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-split-artifact-"));
   const child = fakeExpoChild();
   const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const stderr = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const resultPromise = runExpo({
     projectRoot: root,
-    temporaryRoot,
     mode: "tunnel",
-    timeoutMs: 1_000,
+    timeoutMs: 3_000,
     stdout,
     stderr,
     spawnImpl: () => child,
     render: () => async (url) => `QR FOR ${url}\n`,
   });
-  await new Promise((resolve) => setImmediate(resolve));
 
   child.stdout.write("Published: exp://simu");
   child.stdout.write("lated.exp.direct\n");
-  assert.doesNotMatch(stdout.output, /\[TUI QR\]/, "the report must wait for the browser endpoint");
+  assert.doesNotMatch(stdout.output, /QR:/, "the report must wait for the browser probe");
   child.stderr.write("Browser: https://simulated.");
   child.stderr.write("exp.direct\n");
+  await waitForReport(stdout);
   child.stdout.end();
   child.stderr.end();
   child.emit("close", 0, null);
 
   const result = await resultPromise;
   assert.equal(result.url, "exp://simulated.exp.direct");
-  assert.equal(result.browserUrl, "https://simulated.exp.direct");
+  assert.equal(result.browserUrl, "http://simulated.exp.direct/");
   assert.match(stdout.output, /QR FOR exp:\/\/simulated\.exp\.direct/);
-  assert.match(stdout.output, /Browser: https:\/\/simulated\.exp\.direct/);
+  assert.match(stdout.output, /Browser: http:\/\/simulated\.exp\.direct/);
 });
 
-test("does not create a final report or QR when Expo exits without a browser HTTPS endpoint", async () => {
+test("does not create a report when the tunnel serves no browser app", async () => {
   const root = await createFakeExpoProject("expo-run-missing-browser-");
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-missing-browser-artifact-"));
   const child = fakeExpoChild();
   const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const stderr = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const result = runExpo({
     projectRoot: root,
-    temporaryRoot,
     mode: "tunnel",
-    timeoutMs: 1_000,
+    timeoutMs: 3_000,
     stdout,
     stderr,
     spawnImpl: () => child,
     render: () => async () => "QR MUST NOT RENDER\n",
+    fetchImpl: async () => ({ ok: false }),
   });
-  await new Promise((resolve) => setImmediate(resolve));
 
   child.stdout.write("Published: exp://simulated.exp.direct\n");
   child.stdout.end();
@@ -325,8 +304,33 @@ test("does not create a final report or QR when Expo exits without a browser HTT
   child.emit("close", 0, null);
 
   await assert.rejects(result, /both a public https:\/\/ browser URL and an exp:\/\/ URL/i);
-  assert.doesNotMatch(stdout.output, /\[TUI QR\]|QR MUST NOT RENDER/);
-  await assert.rejects(readFile(qrArtifactPath({ projectRoot: root, temporaryRoot }), "utf8"), /ENOENT/);
+  assert.doesNotMatch(stdout.output, /QR:|QR MUST NOT RENDER/);
+});
+
+test("status re-renders the same report for an already-running tunnel", async () => {
+  const root = await createFakeExpoProject("expo-run-status-");
+  const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
+  const result = await runExpo({
+    projectRoot: root,
+    mode: "status",
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ extra: { expoGo: { debuggerHost: "simulated.boltexpo.dev", projectRoot: root } } }),
+    }),
+    readTunnelUrls: async () => ({ browserUrl: "https://simulated.boltexpo.dev/", url: "exp://simulated.boltexpo.dev" }),
+    render: () => async () => "QR FOR exp://simulated.boltexpo.dev\n",
+    stdout,
+  });
+  assert.equal(result.alreadyRunning, true);
+  assert.equal(stdout.output, [
+    "---",
+    "Browser: https://simulated.boltexpo.dev/",
+    "",
+    "QR:",
+    "QR FOR exp://simulated.boltexpo.dev",
+    "---",
+    "",
+  ].join("\n"));
 });
 
 test("forwards SIGINT then SIGTERM and waits for owned child close", async () => {
@@ -339,7 +343,6 @@ test("forwards SIGINT then SIGTERM and waits for owned child close", async () =>
     spawnImpl: () => child,
     signalSource,
   });
-  await new Promise((resolve) => setImmediate(resolve));
   let settled = false;
   void runPromise.then(() => { settled = true; }, () => { settled = true; });
 
@@ -363,7 +366,6 @@ test("forwards repeated SIGINT while waiting for owned child close", async () =>
     spawnImpl: () => child,
     signalSource,
   });
-  await new Promise((resolve) => setImmediate(resolve));
   let settled = false;
   void runPromise.then(() => { settled = true; }, () => { settled = true; });
 
@@ -375,4 +377,40 @@ test("forwards repeated SIGINT while waiting for owned child close", async () =>
   await runPromise;
 
   assert.deepEqual(child.signals, ["SIGINT", "SIGINT"]);
+});
+
+test("setup installs a runnable helper and preserves custom launchers", async () => {
+  const root = await createFakeExpoProject("expo-setup-");
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { expo: "*" }, scripts: { test: "test-command" } }));
+  await configureProject({ projectRoot: root, write: true });
+  assert.match(await readFile(join(root, "scripts/expo-go-launch.mjs"), "utf8"), /formatReadyOutput/);
+  assert.equal(JSON.parse(await readFile(join(root, "package.json"))).scripts.test, "test-command");
+  await writeFile(join(root, "scripts/expo-go-launch.mjs"), "custom startup");
+  await assert.rejects(configureProject({ projectRoot: root, write: true }), /Existing launcher differs/);
+  assert.equal(await readFile(join(root, "scripts/expo-go-launch.mjs"), "utf8"), "custom startup");
+});
+
+test("browser verification rejects landing pages and uses the published tunnel authority", async () => {
+  let requested;
+  const fetchImpl = async (url) => { requested = url; return webResponse(); };
+  assert.deepEqual(await verifyTunnelUrl("exp://actual.exp.direct:80", fetchImpl), {
+    url: "exp://actual.exp.direct:80", browserUrl: "http://actual.exp.direct:80/",
+  });
+  assert.equal(requested, "http://actual.exp.direct:80/");
+  assert.equal(await verifyTunnelUrl("exp://localhost:8081", fetchImpl), null);
+  assert.equal(await verifyTunnelUrl("exp://actual.exp.direct", async () => ({ ...webResponse(), text: async () => "<html>Open Expo Go</html>" })), null);
+  assert.equal(await verifyTunnelUrl("exp://actual.exp.direct", async () => ({ ...webResponse(), headers: { get: () => "application/json" } })), null);
+});
+
+test("status refuses a different project's server", async () => {
+  await assert.rejects(runExpo({ mode: "status", projectRoot: "/different", fetchImpl: async () => ({ ok: true, json: async () => ({ extra: { expoGo: { projectRoot: "/other" } } }) }) }), /belongs to this project/);
+});
+
+test("readiness timeout stops the owned child and never prints a QR", async () => {
+  const root = await createFakeExpoProject("expo-timeout-");
+  const child = fakeExpoChild();
+  child.kill = () => { setImmediate(() => child.emit("close", null, "SIGTERM")); return true; };
+  const stdout = { output: "", write(chunk) { this.output += chunk; } };
+  await assert.rejects(runExpo({ mode: "tunnel", projectRoot: root, spawnImpl: () => child, timeoutMs: 20, stdout, stderr: { write() {} }, fetchImpl: async () => ({ ok: false }) }), /within 20ms/);
+  assert.doesNotMatch(stdout.output, /QR:/);
 });

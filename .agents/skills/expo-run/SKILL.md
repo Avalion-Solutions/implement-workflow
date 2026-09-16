@@ -1,155 +1,95 @@
 ---
 name: expo-run
-description: Configure, launch, observe, or stop an Expo project with local web and Expo Go tunnel defaults, reading repository-specific Expo instructions when present.
+description: Read repository Expo instructions, configure or start its browser and Expo Go tunnel, and print the browser URL and scannable terminal QR.
 ---
 
 # Expo Run
 
-Use this skill as the portable Expo launch template. First identify the actual
-project root containing `package.json`; do not assume the repository root is
-runnable.
+Read applicable `AGENTS.md` files and
+`<repository-root>/.agents/expo-run.md` when present before configuring or
+launching. Identify the runnable Expo project, which may be a subdirectory.
+Follow its launcher, staging policy, environment, companion services, and
+safe-stop requirements.
 
-## Repository instructions
+## Setup
 
-Before configuring or launching, read `<repository-root>/.agents/expo-run.md`
-when it exists. This is the standard location for repository-specific Expo
-requirements such as an app subdirectory, staging policy, companion services,
-environment variables, health endpoint, and safe stop behavior. Follow it in
-addition to this skill. It may select an existing repository launcher; do not
-overwrite that launcher with `--write` unless the instructions explicitly say
-it is safe.
-
-When a repository has recurring Expo requirements but no such file, create a
-concise `.agents/expo-run.md` only when the user asks to record or configure
-that project behavior. Keep it limited to facts the generic template cannot
-discover.
-
-## Preflight
-
-From the proposed project root, inspect configuration without mutating it:
+Reuse a compatible repository launcher. Adapt an existing specialized launcher
+to the output contract below without losing its startup behavior. When no
+suitable script exists, configure the portable helper:
 
 ```sh
-node <expo-run-skill>/scripts/configure-expo-run.mjs --check .
+node <expo-run-skill>/scripts/configure-expo-run.mjs --check <project-root>
+node <expo-run-skill>/scripts/configure-expo-run.mjs --write <project-root>
 ```
 
-The project must declare `expo` in `dependencies` or `devDependencies`.
-Tunnel mode also needs project-local `@expo/ngrok` and `qrcode-terminal`.
-If either dependency is missing, explain the exact missing package and ask for
-approval before installing compatible project-local versions, for example:
+The write command copies the bundled launcher and sets `start` to
+`node scripts/expo-go-launch.mjs tunnel`, with `start:status` to reprint
+a running tunnel's report. It does not add `start:local`: the tunnel serves
+both browser and mobile clients. Preserve existing project-specific scripts.
+It refuses to overwrite a different existing launcher; inspect and adapt that
+script instead.
 
-```sh
-pnpm add -D @expo/ngrok qrcode-terminal
-```
+Use project-local Expo, `@expo/ngrok`, and `qrcode-terminal`. Install
+missing project dependencies compatible with the declared SDK/device constraints.
+Ensure Expo Web dependencies and Metro web configuration are available
+(`pnpm exec expo install react-dom react-native-web @expo/metro-runtime`
+where applicable). Routine setup is part of the launch request; host permission
+checks still apply.
 
-Do not use a global Expo CLI, a global QR tool, PNG generation, `qrencode`, or
-a browser for the tunnel journey. Do not infer an Expo Go URL from a project
-name, host, or fixed port. Before launching, the launcher requests the Expo
-manifest at its configured local endpoint; a valid response means Metro is
-already running, so report it and do not start a duplicate.
+## Launch
 
-## Configure package scripts
+Run `pnpm start` or the repository-selected equivalent in a persistent
+terminal session and keep it running for the user. Verify a known server's
+project identity before reusing it.
 
-After approval to change this Expo project's `package.json`, copy
-`expo-go-launch.mjs` from this skill's `scripts/` directory into the project's
-`scripts/` directory, then apply the mapping:
+The portable helper uses `start --go --web --tunnel --clear` with
+`BROWSER=none`. This selects Expo Go and initializes web support without
+opening a GUI. Both clients use the public tunnel. A separate local server
+is not required for the normal browser-plus-mobile workflow.
 
-```sh
-node <expo-run-skill>/scripts/configure-expo-run.mjs --write .
-```
+Wait for the actual published `exp://` URL. Probe the HTTP variant of that
+same tunnel, follow redirects, and require app HTML containing a bundle script
+before reporting readiness. Do not trust arbitrary HTTPS links in logs or
+ngrok's first unrelated tunnel. A successful HEAD, JSON manifest, or Expo
+loading page alone does not prove browser readiness. For a repository-specific
+tunnel domain, adapt the helper's domain check to the documented launcher.
 
-This maps the target project's default mobile and local development paths while
-preserving all unrelated package fields and scripts:
+Observe startup failures and report them instead of inventing endpoints.
+The helper defaults to a 120-second deadline (`EXPO_RUN_TIMEOUT_MS`).
+Tunnel access needs internet and may be slower than local development; native
+and web rendering can differ according to the application.
 
-```json
-{
-  "scripts": {
-    "start": "node scripts/expo-go-launch.mjs tunnel",
-    "start:local": "node scripts/expo-go-launch.mjs local"
-  }
-}
-```
+## Required report
 
-`--check` is a non-mutating preview. The configurator rejects non-Expo
-packages; it never installs dependencies itself.
-
-## Launch browser and Expo Go through one tunnel
-
-Run this only when the user has asked to launch the app and accepts opening a
-public tunnel:
-
-```sh
-pnpm start
-```
-
-The foreground launcher invokes the project's Expo CLI with exactly:
-
-```text
-start --go --tunnel --clear
-```
-
-It waits until Expo actually prints both a public `https://...` browser URL and
-an `exp://...` Expo Go URL. Only then does it render a terminal QR for that
-exact Expo Go URL and save the same QR text and URL in a project-specific
-`.txt` file under `BASICS_TEMP_ROOT/<project>/expo/` (or its platform fallback). It reports an actionable
-timeout or missing-project-dependency error instead of fabricating either URL
-or a QR.
-
-After both endpoints are confirmed, read the generated QR text file and issue
-this final report exactly, with no leading indentation and the actual terminal
-QR replacing `<terminal-qr>`:
+The launcher must print the complete report to stdout, and the agent must
+reproduce it in its response. Use exactly this layout with real values:
 
 ```text
 ---
-Browser: https://xxx
-Expo Go: exp://xxx
-QR report: <BASICS_TEMP_ROOT>/<project>/expo/expo-go-qr.txt
+Browser: http://actual-tunnel-host
 
-[TUI QR]
-<terminal-qr>
+QR:
+<actual scannable terminal QR encoding the published exp:// URL>
 ---
 ```
 
-This is required even when terminal output is truncated. Never derive one URL
-from the other, report a local-only endpoint as the browser URL, or promise a
-fixed port.
+Use the verified HTTP or HTTPS browser URL, including redirects. Every report
+line starts at column one: no added indentation, list nesting, blockquotes, or
+code fences around the final report. Preserve the QR renderer's own characters
+and necessary internal/quiet-zone spacing exactly. Do not replace the QR with
+a raw URL, placeholder, image link, summary, or artifact path.
 
-## Launch local Expo Web
+A saved report is optional and never replaces stdout or the agent's visible
+response. If output is truncated, use `pnpm run start:status` to reprint it.
+Set `EXPO_RUN_MANIFEST_URL` to the known local manifest endpoint when it is
+not port 8081. Status checks the manifest's project root; if identity cannot be
+verified, inspect the owned process and repository launcher rather than
+printing another project's report.
 
-For local-only web development, run:
+## Stop and checks
 
-```sh
-pnpm run start:local
-```
-
-This invokes the project's Expo CLI with exactly:
-
-```text
-start --web --localhost --clear
-```
-
-Expo may open its local browser normally in this user-requested mode. This is
-not a tunnel and does not render or persist an Expo Go QR. CI and automated
-checks must not invoke either launch command.
-
-## Health, logs, and stop
-
-Observe the launcher's own output and Expo's emitted lines. Treat both the
-observed public `https://` browser URL and `exp://` Expo Go URL as tunnel
-readiness. On timeout or early exit, report the first actionable Expo output
-and dependency guidance before changing commands.
-
-The launcher remains in the foreground. Stop it with Ctrl-C (or SIGTERM); it
-forwards that signal to its Expo child. Never detach the process, kill a fixed
-port, or terminate a process that the launcher does not own.
-
-## Known failures
-
-- A missing `@expo/ngrok` or `qrcode-terminal` is a project dependency issue:
-  ask before installing it locally; do not substitute a global tool.
-- If either the public `https://` browser URL or `exp://` Expo Go URL is absent
-  before the timeout, inspect Expo output and the tunnel/network configuration.
-  There is no usable final report or QR artifact in this state.
-- Expo Web can fail when web dependencies are absent. Surface Expo's first
-  error rather than adding packages or switching modes automatically.
-- A printed localhost or LAN URL is useful only when Expo actually printed it;
-  it is never a replacement for the mobile tunnel URL.
+Forward Ctrl-C/SIGTERM to the owned Expo child and wait for its exit.
+Stop only processes belonging to this launch. Automated checks use simulated
+servers and must not open a GUI or public tunnel. The helper's optional `local`
+mode remains available for existing launchers that explicitly require it;
+normal setup does not create a local-mode package script.
