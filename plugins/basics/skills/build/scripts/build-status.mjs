@@ -76,7 +76,7 @@ async function main() {
       lifecycleHook();
       break;
     case "read":
-      printState();
+      await printState();
       break;
     case "serve":
       await serveDashboard();
@@ -335,6 +335,33 @@ function updateTeam() {
     record(records, "team", { team: id, status, progress: current.teams[id].progress, message: current.teams[id].message, evidence: current.teams[id].evidence });
   });
   print({ team: state.teams[id] });
+}
+
+function reconcileTeamReceipt(statusDir, receipt) {
+  const team = pipelineTeam(receipt.team);
+  const status = valid(receipt.status, TEAM_STATES, "team status");
+  if (!COMPLETED_STATES.has(status)) throw new Error(`Receipt status is not terminal: ${status}`);
+  const receiptId = String(receipt.id || "");
+  if (!receiptId) throw new Error("Telemetry receipt requires an id");
+  let emitted = false;
+  const state = withState((current, records) => {
+    const alreadyRecorded = (current.events || []).some((event) => event.receiptId === receiptId);
+    const previous = current.teams[team] || { id: team, createdAt: timestamp() };
+    current.teams[team] = {
+      ...previous, status, progress: 100,
+      message: receipt.message || `${receipt.stage} handoff accepted`,
+      evidence: receipt.manifest || previous.evidence || "",
+      receiptId, updatedAt: timestamp(),
+    };
+    if (!alreadyRecorded) {
+      emitted = true;
+      record(records, "team", {
+        team, status, progress: 100, message: current.teams[team].message,
+        evidence: current.teams[team].evidence, receiptId,
+      });
+    }
+  }, statusDir);
+  return { team: state.teams[team], emitted };
 }
 
 function updateHookContext() {
@@ -674,15 +701,24 @@ function normalizeCollection(collection, normalize) {
   return normalized;
 }
 
-function printState() {
+async function printState() {
   const paths = files();
   if (!existsSync(paths.state)) throw new Error(`No status store at ${paths.state}`);
+  await reconcilePendingHandoffs(paths.root);
   process.stdout.write(`${JSON.stringify(readNormalizedState(paths.state), null, 2)}\n`);
+}
+
+function reconcilePendingHandoffs(root) {
+  const ledger = join(resolve(root), "handoffs", "run-ledger.json");
+  if (!existsSync(ledger)) return;
+  // Dynamic import avoids coupling hook startup to the handoff command's CLI.
+  return import("./build-handoff.mjs").then(({ reconcile }) => reconcile({ "status-dir": root }));
 }
 
 async function serveDashboard() {
   const paths = files();
   if (!existsSync(paths.state)) throw new Error(`No status store at ${paths.state}; run init first`);
+  await reconcilePendingHandoffs(paths.root);
   const currentState = readNormalizedState(paths.state);
   const currentSlug = currentState.run.slug || slugFor(currentState.run.id);
   const runsRoot = resolve(options["runs-dir"] || dirname(paths.root));
@@ -829,7 +865,7 @@ function createDashboardHandler({ dashboardRoot, apiBaseUrl, bootstrapState, boo
 }
 
 function createApiHandler({ paths, runsRoot, currentSlug, instanceId, archive, bindHost }) {
-  return (request, response) => {
+  return async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     if (request.method !== "GET") return sendJson(response, 405, { error: "Method not allowed" });
     const url = new URL(request.url, "http://localhost");
@@ -838,6 +874,7 @@ function createApiHandler({ paths, runsRoot, currentSlug, instanceId, archive, b
     }
     if (url.pathname === "/api/status") {
       try {
+        await reconcilePendingHandoffs(paths.root);
         return sendJson(response, 200, readNormalizedState(paths.state));
       } catch (error) {
         return sendJson(response, 500, { error: error.message });
@@ -859,9 +896,15 @@ function createApiHandler({ paths, runsRoot, currentSlug, instanceId, archive, b
       } catch (error) {
         return sendJson(response, 400, { error: error.message });
       }
-      const entry = findRun(runsRoot, paths.state, slug);
+      let entry = findRun(runsRoot, paths.state, slug);
       if (!entry) return sendJson(response, 404, { error: `Unknown run: ${slug}` });
       if (entry.error) return sendJson(response, 422, { error: entry.error });
+      try {
+        await reconcilePendingHandoffs(entry.statusDir);
+        entry = findRun(runsRoot, paths.state, slug);
+      } catch (error) {
+        return sendJson(response, 500, { error: error.message });
+      }
       if (match[2] === "status") return sendJson(response, 200, entry.state);
       try {
         return sendDownload(response, `${slug}-build-status.json`, createRunExport(entry));
@@ -1165,4 +1208,4 @@ function printUsage() {
   process.stdout.write("Usage: build-status.mjs <init|run|team|agent|task|event|context|hook|read|serve> [options]\nHook options: context --state-dir <path> --team <id> --task <id> [--agent <id>] [--workspace <path>] | hook [--runs-dir <durable-archive>] < event.json\nServe options: --runs-dir <durable-archive> --host <host> --port <preferred-port> --api-port <preferred-port> --open [--strict-port]\n");
 }
 
-export { archiveId, browserHost, browserLaunchCommand, createRunExport, discoverRuns, findRun, hookToolOutcome, isReusableDashboard, normalizeState, normalizeTeamId, openDefaultBrowser, pathContains, pipelineTeam, runMatches, runMetadata, sameCommand, serializeBootstrapState, slugFor, subagentFinalStatus, summarizeState, urlHost, validRunSlug };
+export { archiveId, browserHost, browserLaunchCommand, createRunExport, discoverRuns, findRun, hookToolOutcome, isReusableDashboard, normalizeState, normalizeTeamId, openDefaultBrowser, pathContains, pipelineTeam, reconcileTeamReceipt, runMatches, runMetadata, sameCommand, serializeBootstrapState, slugFor, subagentFinalStatus, summarizeState, urlHost, validRunSlug };

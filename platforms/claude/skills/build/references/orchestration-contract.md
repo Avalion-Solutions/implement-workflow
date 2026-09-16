@@ -77,12 +77,13 @@ Use the deterministic helper:
 
 ```bash
 node <skill>/scripts/build-handoff.mjs validate --file <manifest>
-node <skill>/scripts/build-handoff.mjs record --status-dir <status-dir> --file <manifest>
+node <skill>/scripts/build-handoff.mjs close-stage --status-dir <status-dir> --file <staged-manifest>
+node <skill>/scripts/build-handoff.mjs reconcile --status-dir <status-dir>
 node <skill>/scripts/build-handoff.mjs budget --status-dir <status-dir> --kind manifest --file <manifest>
 node <skill>/scripts/build-handoff.mjs time-budget --status-dir <status-dir>
 ```
 
-`record` updates `run-ledger.json` atomically and prints the compact receipt to return upstream. The ledger is the parent's stage-close memory; raw logs and earlier manifests are not conversational payload.
+`close-stage` is the required terminal-stage interface. It accepts only `completed` and `not-required`, validates the dependency chain, promotes the staged manifest to its canonical path, records a pending ledger receipt, and reconciles dashboard telemetry. Reconciliation is restart-safe and idempotent by stage and manifest SHA-256. The ledger and canonical manifest remain authoritative; a telemetry failure stays visible and non-release-blocking. Legacy `record` remains available only for offline ledger-only compatibility.
 
 ## Authorization provenance
 

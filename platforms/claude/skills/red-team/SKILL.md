@@ -34,6 +34,6 @@ Return one `red-1.json`. Build does not ask Red to re-review a Fixer candidate; 
 
 ## Handoff
 
-Under Build, write `<status-dir>/handoffs/red-1.json` containing commit/snapshot identity, source integrity result, coverage, scoped/deferred/rejected findings, verification paths, fallbacks, and unreviewed scope. Validate and record it with `build-handoff.mjs`; return only the receipt and artifact links. Outside Build, return equivalent concise Markdown.
+Under Build, write a staged `red-1` manifest containing commit/snapshot identity, source integrity result, coverage, scoped/deferred/rejected findings, verification paths, fallbacks, and unreviewed scope. The Build orchestrator must close it with `build-handoff.mjs close-stage`; return only the receipt and artifact links. Outside Build, return equivalent concise Markdown.
 
 Remove only the team-created snapshot after delivery. A no-finding result is valid; never invent repair work.

@@ -34,6 +34,6 @@ Run the full relevant repository suite from the Blue integration worktree. Separ
 
 ## Handoff
 
-Under Build, write `<status-dir>/handoffs/blue.json` with resolved decisions, criterion coverage, specialist commits, changed behavior, exact checks/results, blockers, artifact/log paths, and the final candidate branch/SHA. Validate and record it with `build-handoff.mjs`; return only the receipt and artifact links. Outside Build, return the equivalent concise Markdown delivery.
+Under Build, write a staged Blue manifest with resolved decisions, criterion coverage, specialist commits, changed behavior, exact checks/results, blockers, artifact/log paths, and the final candidate branch/SHA. The Build orchestrator must close it with `build-handoff.mjs close-stage --status-dir <status-dir> --file <staged-manifest>`; return only the receipt and artifact links. Outside Build, return the equivalent concise Markdown delivery.
 
 Remove only team-created specialist worktrees after their commits are merged or intentionally retained. Preserve the Blue integration branch as the candidate artifact.
