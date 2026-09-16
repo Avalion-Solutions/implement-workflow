@@ -36,6 +36,5 @@ test("every current temporary-work producer resolves BASICS_TEMP_ROOT or the por
     assert.match(readFileSync(join(repositoryRoot, producer), "utf8"), /shared\/temp-location/, producer);
   }
   const copiedExpoLauncher = readFileSync(join(repositoryRoot, ".agents/skills/expo-run/scripts/expo-go-launch.mjs"), "utf8");
-  assert.match(copiedExpoLauncher, /BASICS_TEMP_ROOT/);
-  assert.match(copiedExpoLauncher, /resolveTemporaryRoot/);
+  assert.doesNotMatch(copiedExpoLauncher, /writeFile|mkdtemp|mkdir/);
 });

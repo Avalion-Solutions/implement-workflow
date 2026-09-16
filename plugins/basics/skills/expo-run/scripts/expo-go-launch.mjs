@@ -10,7 +10,7 @@ const HTTPS_ENDPOINT = /\bhttps:\/\/[^\s"'`<>]+/gi;
 const EXPO_URL = /\bexp:\/\/[^\s"'`<>]+/i;
 
 export function expoArguments(mode) {
-  if (mode === "tunnel") return ["start", "--go", "--tunnel", "--clear"];
+  if (mode === "tunnel") return ["start", "--go", "--web", "--tunnel", "--clear"];
   if (mode === "local") return ["start", "--web", "--localhost", "--clear"];
   throw new Error(`Unsupported Expo run mode: ${mode}`);
 }
@@ -40,7 +40,8 @@ export function formatReadyOutput({ browserUrl, url, qr }) {
   return [
     "---",
     `Browser: ${browserUrl}`,
-    "[TUI QR]",
+    "",
+    "QR:",
     qr.trimEnd(),
     "---",
     "",
@@ -61,27 +62,34 @@ export async function readExistingExpoManifest({ fetchImpl = fetch, manifestUrl 
   }
 }
 
-export async function readPublishedTunnelUrls({ fetchImpl = fetch, manifestUrl = "http://127.0.0.1:8081/" } = {}) {
+export async function readPublishedTunnelUrls({ fetchImpl = fetch, manifestUrl = "http://127.0.0.1:8081/", projectRoot } = {}) {
   const manifestResponse = await fetchImpl(manifestUrl, {
     headers: { Accept: "application/expo+json,application/json", "Expo-Platform": "ios" },
+    signal: AbortSignal.timeout(5_000),
   });
   if (!manifestResponse.ok) return null;
   const manifest = await manifestResponse.json();
+  if (projectRoot && manifest?.extra?.expoGo?.projectRoot !== projectRoot) return null;
   const host = manifest?.extra?.expoGo?.debuggerHost;
   if (typeof host !== "string") return null;
 
-  if (host.endsWith(".boltexpo.dev")) {
-    const browserUrl = `https://${host}/`;
-    const browserResponse = await fetchImpl(browserUrl, { method: "HEAD", headers: { Accept: "text/html" } });
-    return browserResponse.ok ? { url: `exp://${host}`, browserUrl } : null;
-  }
+  return verifyTunnelUrl(`exp://${host}`, fetchImpl);
+}
 
-  if (!host.endsWith(".exp.direct")) return null;
-  const tunnelsResponse = await fetchImpl("http://127.0.0.1:4040/api/tunnels");
-  if (!tunnelsResponse.ok) return null;
-  const tunnels = await tunnelsResponse.json();
-  const browserUrl = tunnels?.tunnels?.map((tunnel) => tunnel?.public_url).find((value) => typeof value === "string" && value.startsWith("https://"));
-  return browserUrl ? { url: `exp://${host}`, browserUrl } : null;
+export async function verifyTunnelUrl(url, fetchImpl = fetch) {
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== "exp:" || !/\.(exp\.direct|boltexpo\.dev)$/.test(endpoint.hostname)) return null;
+  // The published Expo authority identifies the tunnel; probe its web variant
+  // instead of trusting unrelated links in CLI output or ngrok's first tunnel.
+  const browserUrl = `http://${endpoint.host}/`;
+  const response = await fetchImpl(browserUrl, {
+    headers: { Accept: "text/html", "ngrok-skip-browser-warning": "true" },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok || !response.headers?.get("content-type")?.includes("text/html")) return null;
+  const body = await response.text();
+  if (!/<script\b[^>]*src=["'][^"']*(?:\.bundle|entry|index)[^"']*["']/i.test(body)) return null;
+  return { url, browserUrl: response.url || browserUrl };
 }
 
 export async function renderReadyReport({ projectRoot, browserUrl, url, render = terminalQrRenderer, stdout = process.stdout }) {
@@ -183,15 +191,16 @@ export async function runExpo({
   render = terminalQrRenderer,
   signalSource = process,
   fetchImpl = fetch,
-  manifestUrl = "http://127.0.0.1:8081/",
+  manifestUrl = process.env.EXPO_RUN_MANIFEST_URL || "http://127.0.0.1:8081/",
   readTunnelUrls,
 } = {}) {
   const root = resolve(projectRoot);
-  const existing = await readExistingExpoManifest({ fetchImpl, manifestUrl });
-  if (mode === "status" || (existing && mode === "tunnel")) {
+  const existing = mode === "status" ? await readExistingExpoManifest({ fetchImpl, manifestUrl }) : null;
+  if (mode === "status") {
     if (!existing) throw new Error("Expo is not already running; start the tunnel before requesting its status.");
+    if (existing.manifest?.extra?.expoGo?.projectRoot !== root) throw new Error("Cannot verify that the running Expo server belongs to this project. Check EXPO_RUN_MANIFEST_URL.");
     assertTunnelDependencies(root);
-    const urls = await readTunnelUrls?.({ fetchImpl, manifestUrl });
+    const urls = await (readTunnelUrls || readPublishedTunnelUrls)({ fetchImpl, manifestUrl });
     if (!urls) throw new Error("Expo is running, but its verified public HTTPS and Expo Go URLs are not available yet.");
     const report = await renderReadyReport({ projectRoot: root, ...urls, render, stdout });
     return { alreadyRunning: true, manifestUrl: existing.manifestUrl, manifest: existing.manifest, ...report };
@@ -205,12 +214,14 @@ export async function runExpo({
   const cli = resolveExpoCli(root);
   const child = spawnImpl(process.execPath, [cli, ...args], {
     cwd: root,
+    env: { ...process.env, BROWSER: "none" },
     stdio: ["inherit", "pipe", "pipe"],
   });
 
   let publishedUrl = null;
   let browserUrl = null;
   let readyPromise = Promise.resolve();
+  let readyError = null;
   let ready = false;
   let timeout;
   let timedOut = false;
@@ -241,25 +252,26 @@ export async function runExpo({
     })().catch((error) => {
       stderr.write(`expo-run QR setup failed: ${error.message}\n`);
       stopOwnedChild("SIGTERM");
-      throw error;
+      readyError = error;
     });
   };
 
   const flushOutput = streamChildOutput(child, (output) => {
     for (const endpoint of extractLocalEndpoints(output)) localEndpoints.add(endpoint);
     if (!publishedUrl) publishedUrl = extractExpoUrl(output);
-    if (!browserUrl) browserUrl = extractBrowserUrl(output);
-    publish();
+    void pollTunnelUrls();
   }, stdout, stderr);
 
   const pollTunnelUrls = async () => {
-    if (!readTunnelUrls || ready || tunnelPollInFlight) return;
+    if (mode !== "tunnel" || ready || childClosed || tunnelPollInFlight) return;
     tunnelPollInFlight = true;
     try {
-      const urls = await readTunnelUrls({ fetchImpl, manifestUrl });
-      if (!urls) return;
-      publishedUrl ||= urls.url;
-      browserUrl ||= urls.browserUrl;
+      const urls = publishedUrl
+        ? await verifyTunnelUrl(publishedUrl, fetchImpl)
+        : await (readTunnelUrls || readPublishedTunnelUrls)({ fetchImpl, manifestUrl: [...localEndpoints][0] || manifestUrl, projectRoot: root });
+      if (!urls || childClosed || timedOut) return;
+      publishedUrl = urls.url;
+      browserUrl = urls.browserUrl;
       publish();
     } catch { /* Expo's manifest and tunnel API are not ready yet. */ }
     finally {
@@ -282,7 +294,11 @@ export async function runExpo({
 
   return new Promise((resolveRun, rejectRun) => {
     child.once("error", (error) => {
+      childClosed = true;
       clearTimeout(timeout);
+      clearInterval(tunnelPoll);
+      signalSource.removeListener("SIGINT", onSigint);
+      signalSource.removeListener("SIGTERM", onSigterm);
       rejectRun(error);
     });
     child.once("close", async (code, signal) => {
@@ -294,6 +310,7 @@ export async function runExpo({
       signalSource.removeListener("SIGTERM", onSigterm);
       try {
         await readyPromise;
+        if (readyError) throw readyError;
       } catch (error) {
         rejectRun(error);
         return;
