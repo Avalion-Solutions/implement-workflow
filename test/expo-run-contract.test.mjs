@@ -20,6 +20,7 @@ import {
   extractExpoUrl,
   formatReadyOutput,
   qrArtifactPath,
+  readExistingExpoManifest,
   runExpo,
   writeQrArtifact,
 } from "../.agents/skills/expo-run/scripts/expo-go-launch.mjs";
@@ -135,17 +136,44 @@ test("ready output gives the verified browser and Expo Go endpoints followed by 
     url: "exp://abc-123.exp.direct",
     browserUrl: "https://abc-123.exp.direct",
     qr: "QR FOR exp://abc-123.exp.direct",
+    artifact: "/temp/sample/expo/expo-go-qr.txt",
   });
   assert.equal(output, [
     "---",
     "Browser: https://abc-123.exp.direct",
     "Expo Go: exp://abc-123.exp.direct",
+    "QR report: /temp/sample/expo/expo-go-qr.txt",
     "",
     "[TUI QR]",
     "QR FOR exp://abc-123.exp.direct",
     "---",
     "",
   ].join("\n"));
+});
+
+test("reads a valid existing Expo manifest with the mobile request headers", async () => {
+  let request;
+  const existing = await readExistingExpoManifest({
+    manifestUrl: "http://127.0.0.1:8081/",
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return { ok: true, json: async () => ({ name: "already-running" }) };
+    },
+  });
+  assert.deepEqual(existing, { manifestUrl: "http://127.0.0.1:8081/", manifest: { name: "already-running" } });
+  assert.equal(request.options.headers["Expo-Platform"], "ios");
+});
+
+test("does not start a duplicate when the Expo manifest is already reachable", async () => {
+  const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
+  const result = await runExpo({
+    mode: "tunnel",
+    stdout,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ name: "running" }) }),
+    spawnImpl: () => { throw new Error("must not spawn"); },
+  });
+  assert.equal(result.alreadyRunning, true);
+  assert.match(stdout.output, /not starting a duplicate/i);
 });
 
 test("extracts an observed public HTTPS browser endpoint without treating localhost as browser-ready", () => {
@@ -255,6 +283,7 @@ test("waits for both browser and Expo Go URLs split across stdout and stderr chu
     spawnImpl: () => child,
     render: () => async (url) => `QR FOR ${url}\n`,
   });
+  await new Promise((resolve) => setImmediate(resolve));
 
   child.stdout.write("Published: exp://simu");
   child.stdout.write("lated.exp.direct\n");
@@ -288,6 +317,7 @@ test("does not create a final report or QR when Expo exits without a browser HTT
     spawnImpl: () => child,
     render: () => async () => "QR MUST NOT RENDER\n",
   });
+  await new Promise((resolve) => setImmediate(resolve));
 
   child.stdout.write("Published: exp://simulated.exp.direct\n");
   child.stdout.end();
@@ -309,6 +339,7 @@ test("forwards SIGINT then SIGTERM and waits for owned child close", async () =>
     spawnImpl: () => child,
     signalSource,
   });
+  await new Promise((resolve) => setImmediate(resolve));
   let settled = false;
   void runPromise.then(() => { settled = true; }, () => { settled = true; });
 
@@ -332,6 +363,7 @@ test("forwards repeated SIGINT while waiting for owned child close", async () =>
     spawnImpl: () => child,
     signalSource,
   });
+  await new Promise((resolve) => setImmediate(resolve));
   let settled = false;
   void runPromise.then(() => { settled = true; }, () => { settled = true; });
 
