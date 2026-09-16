@@ -9,6 +9,7 @@ import test from "node:test";
 
 import {
   LOCAL_SCRIPT,
+  STATUS_SCRIPT,
   TUNNEL_SCRIPT,
   configurePackage,
   configureProject,
@@ -19,10 +20,9 @@ import {
   extractBrowserUrl,
   extractExpoUrl,
   formatReadyOutput,
-  qrArtifactPath,
   readExistingExpoManifest,
+  renderReadyReport,
   runExpo,
-  writeQrArtifact,
 } from "../.agents/skills/expo-run/scripts/expo-go-launch.mjs";
 
 async function createFakeExpoProject(prefix) {
@@ -66,6 +66,7 @@ test("configures one-command tunnel and local launch scripts without disturbing 
 
   assert.equal(configured.scripts.start, TUNNEL_SCRIPT);
   assert.equal(configured.scripts["start:local"], LOCAL_SCRIPT);
+  assert.equal(configured.scripts["start:status"], STATUS_SCRIPT);
   assert.equal(configured.scripts.test, "node --test");
   assert.equal(configured.dependencies.react, "19.1.0");
   assert.notEqual(configured, source);
@@ -116,19 +117,25 @@ test("extracts only a published Expo URL and ignores ordinary local endpoints", 
   assert.equal(extractExpoUrl("Local: http://localhost:8081"), null);
 });
 
-test("writes a project-specific terminal QR artifact containing the exact published URL", async () => {
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-contract-"));
-  const projectRoot = join(temporaryRoot, "My Expo App");
-  const url = "exp://abc-123.exp.direct";
-  const artifact = await writeQrArtifact({
+test("renders the complete terminal report without creating an artifact", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "expo-run-report-"));
+  const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
+  await renderReadyReport({
     projectRoot,
-    temporaryRoot,
-    url,
-    render: (value) => `QR FOR ${value}\n`,
+    browserUrl: "https://abc-123.exp.direct",
+    url: "exp://abc-123.exp.direct",
+    render: () => async () => "QR FOR exp://abc-123.exp.direct\n",
+    stdout,
   });
-
-  assert.equal(artifact, join(temporaryRoot, "my-expo-app-expo-go-qr.txt"));
-  assert.equal(await readFile(artifact, "utf8"), `QR FOR ${url}\n\nExpo Go URL: ${url}\n`);
+  assert.equal(stdout.output, [
+    "---",
+    "Browser: https://abc-123.exp.direct",
+    "[TUI QR]",
+    "QR FOR exp://abc-123.exp.direct",
+    "---",
+    "",
+  ].join("\n"));
+  assert.doesNotMatch(stdout.output, /Expo Go:|QR report:/);
 });
 
 test("ready output gives the verified browser and Expo Go endpoints followed by the terminal QR", () => {
@@ -136,14 +143,10 @@ test("ready output gives the verified browser and Expo Go endpoints followed by 
     url: "exp://abc-123.exp.direct",
     browserUrl: "https://abc-123.exp.direct",
     qr: "QR FOR exp://abc-123.exp.direct",
-    artifact: "/temp/sample/expo/expo-go-qr.txt",
   });
   assert.equal(output, [
     "---",
     "Browser: https://abc-123.exp.direct",
-    "Expo Go: exp://abc-123.exp.direct",
-    "QR report: /temp/sample/expo/expo-go-qr.txt",
-    "",
     "[TUI QR]",
     "QR FOR exp://abc-123.exp.direct",
     "---",
@@ -165,15 +168,42 @@ test("reads a valid existing Expo manifest with the mobile request headers", asy
 });
 
 test("does not start a duplicate when the Expo manifest is already reachable", async () => {
+  const root = await createFakeExpoProject("expo-run-existing-");
   const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const result = await runExpo({
     mode: "tunnel",
+    projectRoot: root,
     stdout,
     fetchImpl: async () => ({ ok: true, json: async () => ({ name: "running" }) }),
+    readTunnelUrls: async () => ({ browserUrl: "https://running.boltexpo.dev/", url: "exp://running.boltexpo.dev" }),
+    render: () => async () => "QR FOR exp://running.boltexpo.dev\n",
     spawnImpl: () => { throw new Error("must not spawn"); },
   });
   assert.equal(result.alreadyRunning, true);
-  assert.match(stdout.output, /not starting a duplicate/i);
+  assert.equal(stdout.output, [
+    "---",
+    "Browser: https://running.boltexpo.dev/",
+    "[TUI QR]",
+    "QR FOR exp://running.boltexpo.dev",
+    "---",
+    "",
+  ].join("\n"));
+});
+
+test("status re-renders the same terminal report for an already-running tunnel", async () => {
+  const root = await createFakeExpoProject("expo-run-status-");
+  const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
+  const result = await runExpo({
+    mode: "status",
+    projectRoot: root,
+    stdout,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ name: "running" }) }),
+    readTunnelUrls: async () => ({ browserUrl: "https://running.boltexpo.dev/", url: "exp://running.boltexpo.dev" }),
+    render: () => async () => "QR FOR exp://running.boltexpo.dev\n",
+  });
+  assert.equal(result.alreadyRunning, true);
+  assert.match(stdout.output, /Browser: https:\/\/running\.boltexpo\.dev\//);
+  assert.match(stdout.output, /\[TUI QR\]\nQR FOR exp:\/\/running\.boltexpo\.dev/);
 });
 
 test("extracts an observed public HTTPS browser endpoint without treating localhost as browser-ready", () => {
@@ -205,9 +235,8 @@ test("configuration rejects a non-Expo project without writing it", async () => 
   assert.equal(await readFile(packagePath, "utf8"), original);
 });
 
-test("simulated Expo tunnel observes the published URL before emitting an identical QR artifact", async () => {
+test("simulated Expo tunnel observes the published URL before emitting the complete terminal report", async () => {
   const root = await mkdtemp(join(tmpdir(), "expo-run-simulated-project-"));
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-simulated-artifact-"));
   const moduleRoot = join(root, "node_modules");
   await mkdir(join(moduleRoot, "expo", "bin"), { recursive: true });
   await mkdir(join(moduleRoot, "@expo", "ngrok"), { recursive: true });
@@ -243,7 +272,6 @@ test("simulated Expo tunnel observes the published URL before emitting an identi
   const stderr = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const result = await runExpo({
     projectRoot: root,
-    temporaryRoot,
     mode: "tunnel",
     timeoutMs: 1_000,
     stdout,
@@ -258,24 +286,18 @@ test("simulated Expo tunnel observes the published URL before emitting an identi
   assert.match(stdout.output, /Expo arguments: start --go --tunnel --clear/);
   assert.match(stdout.output, /QR FOR exp:\/\/simulated\.exp\.direct/);
   assert.match(stdout.output, /Browser: https:\/\/simulated\.exp\.direct/);
-  assert.match(stdout.output, /Expo Go: exp:\/\/simulated\.exp\.direct/);
+  assert.doesNotMatch(stdout.output, /Expo Go:|QR report:/);
   assert.match(stdout.output, /\[TUI QR\]\nQR FOR exp:\/\/simulated\.exp\.direct/);
-  const artifact = qrArtifactPath({ projectRoot: root, temporaryRoot });
-  const artifactContents = await readFile(artifact, "utf8");
-  assert.match(artifactContents, /QR FOR exp:\/\/simulated\.exp\.direct/);
-  assert.match(artifactContents, /Expo Go URL: exp:\/\/simulated\.exp\.direct/);
   assert.equal(stderr.output, "");
 });
 
 test("waits for both browser and Expo Go URLs split across stdout and stderr chunks", async () => {
   const root = await createFakeExpoProject("expo-run-split-streams-");
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-split-artifact-"));
   const child = fakeExpoChild();
   const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const stderr = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const resultPromise = runExpo({
     projectRoot: root,
-    temporaryRoot,
     mode: "tunnel",
     timeoutMs: 1_000,
     stdout,
@@ -303,13 +325,11 @@ test("waits for both browser and Expo Go URLs split across stdout and stderr chu
 
 test("does not create a final report or QR when Expo exits without a browser HTTPS endpoint", async () => {
   const root = await createFakeExpoProject("expo-run-missing-browser-");
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "expo-run-missing-browser-artifact-"));
   const child = fakeExpoChild();
   const stdout = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const stderr = { output: "", write(chunk) { this.output += String(chunk); return true; } };
   const result = runExpo({
     projectRoot: root,
-    temporaryRoot,
     mode: "tunnel",
     timeoutMs: 1_000,
     stdout,
@@ -326,7 +346,6 @@ test("does not create a final report or QR when Expo exits without a browser HTT
 
   await assert.rejects(result, /both a public https:\/\/ browser URL and an exp:\/\/ URL/i);
   assert.doesNotMatch(stdout.output, /\[TUI QR\]|QR MUST NOT RENDER/);
-  await assert.rejects(readFile(qrArtifactPath({ projectRoot: root, temporaryRoot }), "utf8"), /ENOENT/);
 });
 
 test("forwards SIGINT then SIGTERM and waits for owned child close", async () => {

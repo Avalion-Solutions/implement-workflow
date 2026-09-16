@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export const TUNNEL_SCRIPT = "node scripts/expo-go-launch.mjs tunnel";
 export const LOCAL_SCRIPT = "node scripts/expo-go-launch.mjs local";
+export const STATUS_SCRIPT = "node scripts/expo-go-launch.mjs status";
 const REQUIRED_TUNNEL_DEPENDENCIES = ["@expo/ngrok", "qrcode-terminal"];
 
 function dependencyNames(packageJson) {
@@ -30,6 +31,7 @@ export function configurePackage(packageJson) {
       ...scripts,
       start: TUNNEL_SCRIPT,
       "start:local": LOCAL_SCRIPT,
+      "start:status": STATUS_SCRIPT,
     },
   };
 }
@@ -67,7 +69,7 @@ async function main(argv) {
   const result = await configureProject({ projectRoot: roots[0] ?? ".", write: options.has("--write") });
   const mode = result.wrote ? "Updated" : "Preview";
   process.stdout.write(`${mode} ${result.packagePath}\n`);
-  process.stdout.write(`start: ${TUNNEL_SCRIPT}\nstart:local: ${LOCAL_SCRIPT}\n`);
+  process.stdout.write(`start: ${TUNNEL_SCRIPT}\nstart:local: ${LOCAL_SCRIPT}\nstart:status: ${STATUS_SCRIPT}\n`);
   if (result.missing.length) {
     process.stdout.write(
       `Missing tunnel dependencies: ${result.missing.join(", ")}. With approval, run: pnpm add -D ${result.missing.join(" ")}\n`,
